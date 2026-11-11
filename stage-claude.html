@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Claude 3.7 Sonnet — Sovereign Launch Video Stage (30.00s @ 30fps)</title>
+  <style>
+    @font-face {
+      font-family: 'AntonLocal';
+      src: url('../public/fonts/Anton-Regular.ttf') format('truetype');
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: 'InterLocal';
+      src: url('../public/fonts/InterVariable.woff2') format('woff2');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #EFECE6;
+      font-family: 'InterLocal', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #141413;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #stage-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      box-shadow: 0 40px 120px rgba(45, 35, 25, 0.15);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    canvas#motion-stage {
+      display: block;
+      width: 1920px;
+      height: 1080px;
+      background: #FAF8F5;
+    }
+
+    /* Claude Sovereign Scrubber Bar */
+    #playback-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(24px);
+      border: 1px solid #E8E6DC;
+      border-radius: 9999px;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 1000;
+      box-shadow: 0 16px 40px rgba(20, 20, 19, 0.08);
+      font-family: Menlo, Monaco, monospace;
+      font-size: 13px;
+    }
+
+    button.ctrl-btn {
+      background: #D97757;
+      color: #FFFFFF;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 12px;
+      transition: transform 0.1s, background-color 0.1s;
+    }
+    button.ctrl-btn:hover { background: #CC6B49; }
+    button.ctrl-btn:active { transform: scale(0.96); }
+
+    .jump-btn {
+      background: #FAF8F5;
+      color: #141413;
+      border: 1px solid #E8E6DC;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.1s, border-color 0.1s;
+    }
+    .jump-btn:hover {
+      background: #F0EDE6;
+      border-color: #D97757;
+    }
+
+    input[type=range] {
+      width: 220px;
+      accent-color: #D97757;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <canvas id="motion-stage" width="1920" height="1080"></canvas>
+  </div>
+
+  <div id="playback-bar">
+    <button class="ctrl-btn" id="play-pause-btn">▶ PLAY</button>
+    <input type="range" id="time-slider" min="0" max="30" step="0.0333" value="0">
+    <span id="timecode-display" style="min-width: 80px; color: #D97757; font-weight: 700;">00:00.00</span>
+    <button class="jump-btn" data-time="0.0">ACT 1: THOUGHT</button>
+    <button class="jump-btn" data-time="5.0">ACT 2: ARTIFACTS</button>
+    <button class="jump-btn" data-time="10.0">ACT 3: COMPUTER USE</button>
+    <button class="jump-btn" data-time="15.0">ACT 4: REASONING</button>
+    <button class="jump-btn" data-time="20.0">ACT 5: CRAFT</button>
+    <button class="jump-btn" data-time="25.0">ACT 6: LOCKUP</button>
+    <span style="color: #9E9D95; font-size: 11px; margin-left: 4px;">30s @ 30FPS</span>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('motion-stage');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const W = 1920, H = 1080;
+
+    function resizeStage() {
+      const container = document.getElementById('stage-container');
+      const scale = Math.min((window.innerWidth - 48) / W, (window.innerHeight - 120) / H, 1);
+      container.style.transform = `scale(${scale})`;
+    }
+    window.addEventListener('resize', resizeStage);
+    resizeStage();
+
+    // ========================================================
+    // MATHEMATICAL EASINGS & DYNAMICS
+    // ========================================================
+    const clamp = (v, min = 0, max = 1) => Math.max(min, Math.min(max, v));
+    const norm = (v, a, b) => clamp((v - a) / (b - a));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    const easeOutExpo = (x) => (x === 1 ? 1 : 1 - Math.pow(2, -10 * clamp(x)));
+    const easeOutQuart = (x) => 1 - Math.pow(1 - clamp(x), 4);
+    const easeInOutCubic = (x) => {
+      const c = clamp(x);
+      return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+    };
+
+    // Harmonic spring
+    const spring = (x, omega = 14.0, zeta = 0.70) => {
+      const c = clamp(x);
+      if (c <= 0) return 0;
+      if (c >= 1) return 1;
+      const decay = Math.exp(-zeta * omega * c);
+      const omegaD = omega * Math.sqrt(Math.max(0, 1 - zeta * zeta));
+      return 1 - decay * (Math.cos(omegaD * c) + (zeta * omega / omegaD) * Math.sin(omegaD * c));
+    };
+
+    // Rounded Rectangle Helper
+    function roundRect(ctx, x, y, w, h, r) {
+      const rad = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + rad, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rad);
+      ctx.arcTo(x + w, y + h, x, y + h, rad);
+      ctx.arcTo(x, y + h, x, y, rad);
+      ctx.arcTo(x, y, x + w, y, rad);
+      ctx.closePath();
+    }
+
+    // ========================================================
+    // ZERO-CPU-BLUR 9-SLICE LIGHT-MODE SHADOW STAMP BAKER
+    // ========================================================
+    class LightModeShadowBaker {
+      constructor(radius = 24, maxBlur = 48, maxOffsetY = 24) {
+        this.radius = radius;
+        this.padding = maxBlur * 1.4 + maxOffsetY;
+        this.coreSize = radius * 2 + 32;
+        this.stampSize = this.coreSize + this.padding * 2;
+
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = this.stampSize;
+        this.canvas.height = this.stampSize;
+        this.ctx = this.canvas.getContext('2d');
+        this.bake();
+      }
+
+      bake() {
+        const ctx = this.ctx;
+        const p = this.padding;
+        const s = this.coreSize;
+        const r = this.radius;
+
+        // 3-tier warm ambient occlusion drop shadow profile
+        const tiers = [
+          { offsetY: 2,  blur: 6,  color: 'rgba(45, 35, 25, 0.08)' }, // Contact AO
+          { offsetY: 12, blur: 24, color: 'rgba(45, 35, 25, 0.05)' }, // Key Light
+          { offsetY: 28, blur: 54, color: 'rgba(45, 35, 25, 0.035)' } // Penumbra
+        ];
+
+        tiers.forEach(t => {
+          ctx.save();
+          ctx.shadowColor = t.color;
+          ctx.shadowBlur = t.blur;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = t.offsetY;
+          ctx.fillStyle = '#000000';
+          roundRect(ctx, p, p, s, s, r);
+          ctx.fill();
+          ctx.restore();
+        });
+
+        // Clear interior
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        roundRect(ctx, p, p, s, s, r);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      drawShadow(targetCtx, x, y, width, height, alpha = 1.0) {
+        if (alpha <= 0.001) return;
+        targetCtx.save();
+        targetCtx.globalAlpha *= alpha;
+
+        const p = this.padding;
+        const s = this.coreSize;
+        const r = this.radius;
+        const corner = p + r;
+
+        const sx0 = 0, sx1 = p + r, sx2 = this.stampSize - (p + r);
+        const sw0 = corner, sw1 = s - 2 * r, sw2 = corner;
+        const sy0 = 0, sy1 = p + r, sy2 = this.stampSize - (p + r);
+        const sh0 = corner, sh1 = s - 2 * r, sh2 = corner;
+
+        const dx0 = x - p, dx1 = x + r, dx2 = x + width - r;
+        const dw0 = corner, dw1 = Math.max(0, width - 2 * r), dw2 = corner;
+        const dy0 = y - p, dy1 = y + r, dy2 = y + height - r;
+        const dh0 = corner, dh1 = Math.max(0, height - 2 * r), dh2 = corner;
+
+        // Corners
+        targetCtx.drawImage(this.canvas, sx0, sy0, sw0, sh0, dx0, dy0, dw0, dh0);
+        targetCtx.drawImage(this.canvas, sx2, sy0, sw2, sh0, dx2, dy0, dw2, dh0);
+        targetCtx.drawImage(this.canvas, sx0, sy2, sw0, sh2, dx0, dy2, dw0, dh2);
+        targetCtx.drawImage(this.canvas, sx2, sy2, sw2, sh2, dx2, dy2, dw2, dh2);
+
+        // Edges
+        if (dw1 > 0) {
+          targetCtx.drawImage(this.canvas, sx1, sy0, sw1, sh0, dx1, dy0, dw1, dh0);
+          targetCtx.drawImage(this.canvas, sx1, sy2, sw1, sh2, dx1, dy2, dw1, dh2);
+        }
+        if (dh1 > 0) {
+          targetCtx.drawImage(this.canvas, sx0, sy1, sw0, sh1, dx0, dy1, dw0, dh1);
+          targetCtx.drawImage(this.canvas, sx2, sy1, sw2, sh1, dx2, dy1, dw2, dh1);
+        }
+        targetCtx.restore();
+      }
+    }
+
+    const shadowBaker = new LightModeShadowBaker(22);
+
+    // ========================================================
+    // ANTHROPIC APERTURE / SUNBURST MARK DRAWING
+    // ========================================================
+    function drawAnthropicSunburst(ctx, cx, cy, radius, rotation = 0, color = '#D97757') {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rotation);
+
+      const rays = 16;
+      for (let i = 0; i < rays; i++) {
+        const angle = (i * Math.PI * 2) / rays;
+        ctx.save();
+        ctx.rotate(angle);
+
+        ctx.fillStyle = color;
+        // Tapered rounded petal ray
+        ctx.beginPath();
+        const rayLen = radius;
+        const halfWidth = radius * 0.12;
+        ctx.moveTo(radius * 0.28, -halfWidth * 0.4);
+        ctx.lineTo(rayLen, 0);
+        ctx.lineTo(radius * 0.28, halfWidth * 0.4);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      // Center ring
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 0.24, 0, Math.PI * 2);
+      ctx.fillStyle = '#FAF8F5';
+      ctx.fill();
+      ctx.lineWidth = radius * 0.05;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ARCHITECTURAL LITHOGRAPHIC BACKGROUND & CLEAN TOP BAR
+    // ========================================================
+    function drawPaperBackground(ctx) {
+      // Warm Cotton Alabaster
+      ctx.fillStyle = '#FAF8F5';
+      ctx.fillRect(0, 0, W, H);
+
+      // Subtle Lithographic Grid (96px step)
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#EFECE6';
+      const step = 96;
+      ctx.beginPath();
+      for (let x = 0.5; x <= W; x += step) {
+        ctx.moveTo(x, 0); ctx.lineTo(x, H);
+      }
+      for (let y = 0.5; y <= H; y += step) {
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+      }
+      ctx.stroke();
+
+      // Precision Corner Registration Crosses in Terracotta
+      ctx.strokeStyle = '#D97757';
+      ctx.lineWidth = 1.5;
+      const crosses = [
+        [96.5, 96.5], [W - 96.5, 96.5],
+        [96.5, H - 96.5], [W - 96.5, H - 96.5]
+      ];
+      ctx.beginPath();
+      crosses.forEach(([cx, cy]) => {
+        ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
+        ctx.moveTo(cx, cy - 6); ctx.lineTo(cx + 6, cy);
+      });
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // Clean Top Bar: "ANTHROPIC // CLAUDE 3.7" (No debug frame counters!)
+    function drawCleanTopBar(ctx) {
+      ctx.save();
+
+      // Left: Sovereign Model Lockup
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      // Small Terracotta Aperture Pip
+      drawAnthropicSunburst(ctx, 104, 64, 11, 0, '#D97757');
+
+      ctx.font = '800 14px Menlo, Monaco, monospace';
+      ctx.fillStyle = '#141413';
+      ctx.fillText('ANTHROPIC', 126, 65);
+
+      ctx.fillStyle = '#9E9D95';
+      ctx.fillText('//', 222, 65);
+
+      ctx.fillStyle = '#D97757';
+      ctx.fillText('CLAUDE 3.7', 248, 65);
+
+      // Right: Subtle Editorial Status Pill
+      ctx.textAlign = 'right';
+      ctx.font = '600 12px Menlo, Monaco, monospace';
+      ctx.fillStyle = '#5C5B56';
+      ctx.fillText('FRONTIER INTELLIGENCE FOR BUILDERS', W - 116, 65);
+
+      // Subtle active dot
+      ctx.fillStyle = '#788C5D';
+      ctx.beginPath();
+      ctx.arc(W - 96, 65, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Hairline divider below top bar
+      ctx.strokeStyle = '#E8E6DC';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(96, 96.5);
+      ctx.lineTo(W - 96, 96.5);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // VECTOR MOUSE POINTER HELPER
+    // ========================================================
+    function drawVectorMouseCursor(ctx, x, y, isClicking = false) {
+      ctx.save();
+      ctx.translate(x, y);
+
+      if (isClicking) {
+        ctx.scale(0.92, 0.92);
+      }
+
+      // Cursor drop shadow
+      ctx.shadowColor = 'rgba(20, 20, 19, 0.25)';
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetX = 2;
+      ctx.shadowOffsetY = 4;
+
+      // Classic precision macOS arrow cursor
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, 26);
+      ctx.lineTo(6.5, 20);
+      ctx.lineTo(13.5, 34);
+      ctx.lineTo(18.5, 31.5);
+      ctx.lineTo(11.5, 17.5);
+      ctx.lineTo(20, 17.5);
+      ctx.closePath();
+
+      ctx.fillStyle = '#141413';
+      ctx.fill();
+
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // MASTER DETERMINISTIC RENDER FUNCTION (30.00s @ 30FPS)
+    // ========================================================
+    window.__renderFrameAt = function(t) {
+      t = clamp(t, 0, 30.0);
+
+      // 1. Render Warm Cotton Background & Subtle Grid
+      drawPaperBackground(ctx);
+
+      // ========================================================
+      // ACT 1 (0.00s - 5.00s): "THOUGHT TO CODE." -> "CLAUDE 3.7 SONNET."
+      // ========================================================
+      if (t < 5.00) {
+        if (t < 2.50) {
+          // Part 1A: Word-by-word kinetic pop: "THOUGHT" -> "TO" -> "CODE."
+          const word1 = spring(norm(t, 0.35, 1.05), 15, 0.70);
+          const word2 = spring(norm(t, 0.95, 1.65), 15, 0.70);
+          const word3 = spring(norm(t, 1.55, 2.25), 16, 0.68);
+
+          ctx.save();
+          ctx.translate(W / 2, H / 2);
+
+          // Category Pill
+          const pillAlpha = easeOutExpo(norm(t, 0.1, 0.6));
+          ctx.save();
+          ctx.globalAlpha = pillAlpha;
+          ctx.fillStyle = '#F5F2EB';
+          roundRect(ctx, -160, -230, 320, 34, 17);
+          ctx.fill();
+          ctx.strokeStyle = '#E8E6DC';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = '#D97757';
+          ctx.font = '700 12px Menlo, Monaco, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('DIRECT SPECIFICATION TO REALITY', 0, -213);
+          ctx.restore();
+
+          // Stacked lines with generous spacing (ZERO text overlap!)
+          // Line 1: THOUGHT
+          if (word1 > 0) {
+            ctx.save();
+            ctx.globalAlpha = norm(word1, 0, 0.8);
+            const y1 = lerp(-90, -130, word1);
+            ctx.font = '600 108px Georgia, "Times New Roman", serif';
+            ctx.fillStyle = '#141413';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('THOUGHT', 0, y1);
+            ctx.restore();
+          }
+
+          // Line 2: TO
+          if (word2 > 0) {
+            ctx.save();
+            ctx.globalAlpha = norm(word2, 0, 0.8);
+            const y2 = lerp(10, -20, word2);
+            ctx.font = 'italic 500 76px Georgia, "Times New Roman", serif';
+            ctx.fillStyle = '#5C5B56';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('to', 0, y2);
+            ctx.restore();
+          }
+
+          // Line 3: CODE.
+          if (word3 > 0) {
+            ctx.save();
+            ctx.globalAlpha = norm(word3, 0, 0.8);
+            const y3 = lerp(140, 100, word3);
+            ctx.font = '800 128px "InterLocal", sans-serif';
+            ctx.fillStyle = '#141413';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('CODE.', 0, y3);
+
+            // Terracotta underline rule
+            const ruleW = lerp(0, 480, word3);
+            ctx.fillStyle = '#D97757';
+            ctx.fillRect(-ruleW / 2, y3 + 70, ruleW, 6);
+            ctx.restore();
+          }
+
+          ctx.restore();
+        } else {
+          // Part 1B (2.50s - 5.00s): Transitions to "CLAUDE 3.7 SONNET." Model Specimen Card
+          const enterP = spring(norm(t, 2.50, 3.40), 14, 0.72);
+
+          ctx.save();
+          ctx.translate(W / 2, H / 2 + 20);
+
+          const cardW = 1240, cardH = 580;
+          const sc = lerp(0.92, 1.0, enterP);
+          ctx.scale(sc, sc);
+
+          shadowBaker.drawShadow(ctx, -cardW / 2, -cardH / 2, cardW, cardH, enterP);
+
+          // Card Background
+          ctx.fillStyle = '#FFFFFF';
+          roundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, 24);
+          ctx.fill();
+          ctx.strokeStyle = '#E8E6DC';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          // Card Top Header Bar
+          ctx.fillStyle = '#FAF8F5';
+          roundRect(ctx, -cardW / 2, -cardH / 2, cardW, 58, 24);
+          ctx.fill();
+          ctx.fillRect(-cardW / 2, -cardH / 2 + 30, cardW, 28);
+          ctx.strokeStyle = '#E8E6DC';
+          ctx.beginPath();
+          ctx.moveTo(-cardW / 2, -cardH / 2 + 58);
+          ctx.lineTo(cardW / 2, -cardH / 2 + 58);
+          ctx.stroke();
+
+          // Badge on Left
+          ctx.fillStyle = '#FDF3EE';
+          roundRect(ctx, -cardW / 2 + 32, -cardH / 2 + 15, 175, 28, 14);
+          ctx.fill();
+          ctx.fillStyle = '#D97757';
+          ctx.font = '700 11px Menlo, Monaco, monospace';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('FRONTIER SPECIMEN', -cardW / 2 + 48, -cardH / 2 + 29);
+
+          ctx.font = '600 12px Menlo, Monaco, monospace';
+          ctx.fillStyle = '#5C5B56';
+          ctx.textAlign = 'right';
+          ctx.fillText('BENCHMARK EVAL: SWE-BENCH 70.3%', cardW / 2 - 36, -cardH / 2 + 29);
+
+          // Main Monumental Headline: "CLAUDE 3.7 SONNET."
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.font = '600 86px Georgia, "Times New Roman", serif';
+          ctx.fillStyle = '#141413';
+          ctx.fillText('Claude 3.7 Sonnet', 0, -cardH / 2 + 150);
+
+          // Tagline
+          ctx.font = '600 24px "InterLocal", sans-serif';
+          ctx.fillStyle = '#5C5B56';
+          ctx.fillText('The industry’s first hybrid reasoning & instantaneous coding model.', 0, -cardH / 2 + 215);
+
+          // 3 Architectural Spec Boxes Below
+          const specs = [
+            { label: 'HYBRID ARCHITECTURE', val: 'STANDARD + THINKING', sub: 'Single model dual mode' },
+            { label: 'SWE-BENCH VERIFIED', val: 'STATE OF THE ART', sub: 'Autonomous repo mastery' },
+            { label: 'EXTENDED TOKENS', val: '128,000 OUTPUT', sub: 'Full codebases in 1 pass' }
+          ];
+
+          const boxW = 340, boxH = 180;
+          specs.forEach((s, idx) => {
+            const bx = -540 + idx * 370;
+            const by = -cardH / 2 + 290;
+
+            ctx.fillStyle = '#FAF8F5';
+            roundRect(ctx, bx, by, boxW, boxH, 16);
+            ctx.fill();
+            ctx.strokeStyle = idx === 0 ? '#D97757' : '#E8E6DC';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.fillStyle = idx === 0 ? '#D97757' : '#5C5B56';
+            ctx.font = '700 11px Menlo, Monaco, monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText(s.label, bx + 24, by + 36);
+
+            ctx.fillStyle = '#141413';
+            ctx.font = '800 22px "InterLocal", sans-serif';
+            ctx.fillText(s.val, bx + 24, by + 85);
+
+            ctx.fillStyle = '#788C5D';
+            ctx.font = '600 13px Menlo, Monaco, monospace';
+            ctx.fillText(`● ${s.sub}`, bx + 24, by + 132);
+          });
+
+          ctx.restore();
+        }
+      }
+
+      // ========================================================
+      // ACT 2 (5.00s - 10.00s): INTERACTIVE LIVE ARTIFACTS ENGINE
+      // Split-screen prompt-to-live React component assembly with syntax highlight
+      // ========================================================
+      else if (t >= 5.00 && t < 10.00) {
+        const splitEnter = easeOutExpo(norm(t, 5.00, 5.70));
+
+        ctx.save();
+
+        // Screen-wide Headline
+        ctx.font = '600 50px Georgia, "Times New Roman", serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Live Artifacts Engine: Prompt to native executable code.', W / 2, 142);
+
+        const cardH = 740;
+        const leftW = 820, rightW = 820;
+        const leftX = lerp(-600, 100, splitEnter);
+        const rightX = lerp(W + 600, 1000, splitEnter);
+        const y = 195;
+
+        // LEFT CARD: TypeScript / TSX Editor
+        shadowBaker.drawShadow(ctx, leftX, y, leftW, cardH, 1.0);
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, leftX, y, leftW, cardH, 20);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Editor Header Bar
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, leftX, y, leftW, 48, 20);
+        ctx.fill();
+        ctx.fillRect(leftX, y + 26, leftW, 22);
+
+        // macOS Window dots
+        ['#FF5F56', '#FFBD2E', '#27C93F'].forEach((col, idx) => {
+          ctx.beginPath();
+          ctx.arc(leftX + 28 + idx * 18, y + 24, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = col;
+          ctx.fill();
+        });
+
+        ctx.fillStyle = '#141413';
+        ctx.font = '700 13px Menlo, Monaco, monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('ClaudeArtifact.tsx', leftX + 96, y + 24);
+
+        ctx.fillStyle = '#D97757';
+        ctx.font = '600 11px Menlo, Monaco, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('REACT 19 • TSX STREAM', leftX + leftW - 28, y + 24);
+
+        // User Prompt Callout inside Left Card
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, leftX + 24, y + 66, leftW - 48, 52, 10);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.font = '700 11px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#D97757';
+        ctx.textAlign = 'left';
+        ctx.fillText('USER PROMPT:', leftX + 42, y + 92);
+        ctx.font = '500 13px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#141413';
+        ctx.fillText('"Generate a real-time reactive telemetry dashboard with dual dials"', leftX + 145, y + 92);
+
+        // TypeScript Streaming Code with Syntax Highlighting
+        const codeLines = [
+          { num: '01', text: 'import React, { useState, useEffect } from "react";', col: '#5C5B56' },
+          { num: '02', text: 'import { motion, AnimatePresence } from "framer-motion";', col: '#5C5B56' },
+          { num: '03', text: '', col: '#141413' },
+          { num: '04', text: 'export const TelemetryArtifact = ({ model = "claude-3-7" }) => {', col: '#D97757' },
+          { num: '05', text: '  const [frequency, setFrequency] = useState(138);', col: '#141413' },
+          { num: '06', text: '  const [tokens, setTokens] = useState(64000);', col: '#141413' },
+          { num: '07', text: '  const telemetry = useLiveTelemetry({ latency: "0.4ms" });', col: '#788C5D' },
+          { num: '08', text: '', col: '#141413' },
+          { num: '09', text: '  return (', col: '#141413' },
+          { num: '10', text: '    <Card theme="warm-alabaster" shadow="3-tier">', col: '#D97757' },
+          { num: '11', text: '      <Header status="live-sync" title="Artifact OS" />', col: '#788C5D' },
+          { num: '12', text: '      <DualRadialGauge metric={frequency} unit="BPM" />', col: '#D97757' },
+          { num: '13', text: '      <ThinkingPulse stream={telemetry.active} />', col: '#788C5D' },
+          { num: '14', text: '      <InteractiveSlider value={tokens} max={128000} />', col: '#D97757' },
+          { num: '15', text: '    </Card>', col: '#D97757' },
+          { num: '16', text: '  );', col: '#141413' },
+          { num: '17', text: '};', col: '#141413' }
+        ];
+
+        const linesRevealed = Math.min(codeLines.length, Math.floor(norm(t, 5.2, 8.8) * (codeLines.length + 2)));
+
+        codeLines.slice(0, linesRevealed).forEach((l, idx) => {
+          const ly = y + 150 + idx * 32;
+          ctx.fillStyle = '#9E9D95';
+          ctx.font = '500 13px Menlo, Monaco, monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(l.num, leftX + 28, ly);
+
+          ctx.fillStyle = l.col;
+          ctx.font = '600 14px Menlo, Monaco, monospace';
+          ctx.fillText(l.text, leftX + 68, ly);
+        });
+
+        // Blinking Cursor on active code line
+        if (linesRevealed < codeLines.length && Math.floor(t * 5) % 2 === 0) {
+          const curY = y + 150 + linesRevealed * 32;
+          ctx.fillStyle = '#D97757';
+          ctx.fillRect(leftX + 68, curY - 12, 8, 16);
+        }
+
+        // RIGHT CARD: Live Interactive Rendered Artifact Preview
+        shadowBaker.drawShadow(ctx, rightX, y, rightW, cardH, 1.0);
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, rightX, y, rightW, cardH, 20);
+        ctx.fill();
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Right Header
+        ctx.fillStyle = '#FDF3EE';
+        roundRect(ctx, rightX, y, rightW, 48, 20);
+        ctx.fill();
+        ctx.fillRect(rightX, y + 26, rightW, 22);
+
+        ctx.fillStyle = '#D97757';
+        ctx.font = '700 13px Menlo, Monaco, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('LIVE ARTIFACT WINDOW', rightX + 28, y + 24);
+
+        ctx.fillStyle = '#788C5D';
+        ctx.font = '700 11px Menlo, Monaco, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText('● COMPILED NATIVELY', rightX + rightW - 28, y + 24);
+
+        // Inside Artifact Container (Interactive Component preview)
+        const artPad = 28;
+        const artW = rightW - artPad * 2;
+        const artH = cardH - 120;
+        const artX = rightX + artPad;
+        const artY = y + 68;
+
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, artX, artY, artW, artH, 16);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Dual Circular Dial / Telemetry Visualizer
+        const dialCX1 = artX + artW * 0.30;
+        const dialCX2 = artX + artW * 0.70;
+        const dialCY = artY + 180;
+        const dialRadius = 90;
+
+        // Dial 1: 138 BPM Groove Clock
+        ctx.save();
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.beginPath();
+        ctx.arc(dialCX1, dialCY, dialRadius, Math.PI * 0.75, Math.PI * 2.25);
+        ctx.stroke();
+
+        const dial1P = 0.76;
+        ctx.strokeStyle = '#D97757';
+        ctx.beginPath();
+        ctx.arc(dialCX1, dialCY, dialRadius, Math.PI * 0.75, Math.PI * (0.75 + 1.5 * dial1P));
+        ctx.stroke();
+
+        ctx.fillStyle = '#141413';
+        ctx.font = '800 36px "InterLocal", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('138', dialCX1, dialCY - 5);
+        ctx.font = '700 12px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#5C5B56';
+        ctx.fillText('BPM FREQ', dialCX1, dialCY + 26);
+        ctx.restore();
+
+        // Dial 2: 128K Token Window
+        ctx.save();
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.beginPath();
+        ctx.arc(dialCX2, dialCY, dialRadius, Math.PI * 0.75, Math.PI * 2.25);
+        ctx.stroke();
+
+        const dial2P = 0.92;
+        ctx.strokeStyle = '#788C5D';
+        ctx.beginPath();
+        ctx.arc(dialCX2, dialCY, dialRadius, Math.PI * 0.75, Math.PI * (0.75 + 1.5 * dial2P));
+        ctx.stroke();
+
+        ctx.fillStyle = '#141413';
+        ctx.font = '800 34px "InterLocal", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('128K', dialCX2, dialCY - 5);
+        ctx.font = '700 12px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#5C5B56';
+        ctx.fillText('CONTEXT', dialCX2, dialCY + 26);
+        ctx.restore();
+
+        // Live Real-Time Waveform below dials
+        const waveX = artX + 36;
+        const waveY = artY + 340;
+        const waveW = artW - 72;
+        const waveH = 120;
+
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, waveX, waveY, waveW, waveH, 12);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        for (let pt = 0; pt <= 40; pt++) {
+          const px = waveX + (pt / 40) * waveW;
+          const py = waveY + waveH / 2 + Math.sin(t * 9 + pt * 0.4) * 32 * Math.cos(pt * 0.1);
+          if (pt === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+
+        // Interactive Button Controls at Bottom of Artifact
+        const btnW = (artW - 72 - 16) / 2;
+        const btnY = artY + 490;
+
+        // Button 1
+        ctx.fillStyle = '#D97757';
+        roundRect(ctx, waveX, btnY, btnW, 48, 10);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '700 13px Menlo, Monaco, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('▶ RUN TEST SUITE', waveX + btnW / 2, btnY + 24);
+
+        // Button 2
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, waveX + btnW + 16, btnY, btnW, 48, 10);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = '#141413';
+        ctx.font = '700 13px Menlo, Monaco, monospace';
+        ctx.fillText('DOWNLOAD BUNDLE', waveX + btnW + 16 + btnW / 2, btnY + 24);
+
+        // Artifact Telemetry Footer Pill
+        ctx.font = '600 12px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#5C5B56';
+        ctx.textAlign = 'center';
+        ctx.fillText('STATE MUTATION LATENCY: 0.18ms • HYDRATION: ZERO DRIFT', rightX + rightW / 2, y + cardH - 18);
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 3 (10.00s - 15.00s): "COMPUTER USE." -> "AUTONOMOUS OPERATIONAL AGENTS."
+      // Vector mouse pointer click simulation navigating an OS desktop workspace
+      // ========================================================
+      else if (t >= 10.00 && t < 15.00) {
+        const enterP = easeOutExpo(norm(t, 10.00, 10.60));
+
+        ctx.save();
+
+        // Screen-wide Headline
+        ctx.font = '600 50px Georgia, "Times New Roman", serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Computer Use: Autonomous operational agent control.', W / 2, 142);
+
+        // Main Desktop OS Canvas Frame
+        const dw = 1480, dh = 730;
+        const dx = (W - dw) / 2;
+        const dy = 205;
+
+        shadowBaker.drawShadow(ctx, dx, dy, dw, dh, enterP);
+
+        // Window background
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, dx, dy, dw, dh, 22);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // macOS Window Header Bar
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, dx, dy, dw, 52, 22);
+        ctx.fill();
+        ctx.fillRect(dx, dy + 26, dw, 26);
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.beginPath();
+        ctx.moveTo(dx, dy + 52); ctx.lineTo(dx + dw, dy + 52);
+        ctx.stroke();
+
+        // Window Controls
+        ['#FF5F56', '#FFBD2E', '#27C93F'].forEach((col, idx) => {
+          ctx.beginPath();
+          ctx.arc(dx + 28 + idx * 18, dy + 26, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = col;
+          ctx.fill();
+        });
+
+        // Top Search / Location Pill
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, dx + 120, dy + 11, dw - 440, 30, 8);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#5C5B56';
+        ctx.font = '500 12px Menlo, Monaco, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('https://workspace.claude.ai/agents/production-deploy', dx + 140, dy + 26);
+
+        // Agent Mode Badge on Right
+        ctx.fillStyle = '#FDF3EE';
+        roundRect(ctx, dx + dw - 240, dy + 11, 210, 30, 8);
+        ctx.fill();
+        ctx.fillStyle = '#D97757';
+        ctx.font = '700 11px Menlo, Monaco, monospace';
+        ctx.fillText('● AGENT: IN CONTROL', dx + dw - 225, dy + 26);
+
+        // Two Split Sub-Panels inside Desktop:
+        // Left Sub-Panel: Bash Terminal / Agent Logs
+        const leftSubW = 660, subH = dh - 84;
+        const leftSubX = dx + 24, subY = dy + 64;
+
+        ctx.fillStyle = '#141413';
+        roundRect(ctx, leftSubX, subY, leftSubW, subH, 14);
+        ctx.fill();
+
+        // Terminal lines
+        const termLines = [
+          { tag: 'SYS', text: 'Anthropic Computer Use API v2024-10-22 connected', col: '#9E9D95' },
+          { tag: 'CMD', text: '$ git status --porcelain', col: '#788C5D' },
+          { tag: 'OUT', text: 'M src/App.tsx (6 commits ahead)', col: '#FFFFFF' },
+          { tag: 'CMD', text: '$ npm run test -- --bail', col: '#788C5D' },
+          { tag: 'OUT', text: 'PASS  test/telemetry.test.ts (14/14 passed)', col: '#788C5D' },
+          { tag: 'CMD', text: '$ gh repo create --public && vercel --prod', col: '#D97757' },
+          { tag: 'OUT', text: 'Aliased -> https://claude-launch.vercel.app [200 OK]', col: '#FFFFFF' }
+        ];
+
+        termLines.forEach((tl, idx) => {
+          const tly = subY + 45 + idx * 36;
+          ctx.fillStyle = '#D97757';
+          ctx.font = '700 11px Menlo, Monaco, monospace';
+          ctx.fillText(`[${tl.tag}]`, leftSubX + 24, tly);
+
+          ctx.fillStyle = tl.col;
+          ctx.font = '600 13px Menlo, Monaco, monospace';
+          ctx.fillText(tl.text, leftSubX + 75, tly);
+        });
+
+        // Right Sub-Panel: Graphical Web App Browser being controlled
+        const rightSubX = leftSubX + leftSubW + 24;
+        const rightSubW = dw - leftSubW - 72;
+
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, rightSubX, subY, rightSubW, subH, 14);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Browser inside header
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, rightSubX + 20, subY + 24, rightSubW - 40, 70, 10);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#141413';
+        ctx.font = '800 20px "InterLocal", sans-serif';
+        ctx.fillText('Production Deployment Hub', rightSubX + 40, subY + 54);
+        ctx.font = '500 12px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#5C5B56';
+        ctx.fillText('v3.7.0-release • Target: Global Edge Network', rightSubX + 40, subY + 76);
+
+        // Clickable Button: "DEPLOY TO EDGE CLUSTER"
+        const btnTargetX = rightSubX + 40;
+        const btnTargetY = subY + 130;
+        const btnTargetW = 320;
+        const btnTargetH = 54;
+
+        const isClicked = t >= 12.70;
+        ctx.fillStyle = isClicked ? '#788C5D' : '#D97757';
+        roundRect(ctx, btnTargetX, btnTargetY, btnTargetW, btnTargetH, 12);
+        ctx.fill();
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '700 14px Menlo, Monaco, monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(isClicked ? '✓ DEPLOYED SUCCESSFULLY' : '⚡ SHIP REPOSITORY NOW', btnTargetX + btnTargetW / 2, btnTargetY + 27);
+
+        // Expandable Log Viewer in browser
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, rightSubX + 20, subY + 220, rightSubW - 40, 360, 12);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#5C5B56';
+        ctx.font = '700 12px Menlo, Monaco, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('ACTION LOGS // AUTONOMOUS OPERATOR', rightSubX + 40, subY + 250);
+
+        const actions = [
+          '11:42:01 - Mouse move to viewport coord (1240, 380)',
+          '11:42:02 - Synthesized keystrokes into active shell',
+          '11:42:03 - Autonomous DOM querySelector("#deploy-btn")',
+          '11:42:04 - Click event dispatched with high confidence (0.998)'
+        ];
+
+        actions.forEach((a, idx) => {
+          ctx.fillStyle = '#141413';
+          ctx.font = '500 13px Menlo, Monaco, monospace';
+          ctx.fillText(`● ${a}`, rightSubX + 40, subY + 290 + idx * 40);
+        });
+
+        // ----------------------------------------------------
+        // Vector Mouse Pointer Animation Trajectory
+        // ----------------------------------------------------
+        let cursorX = dx + 300, cursorY = dy + 200;
+        let isCursorClick = false;
+
+        if (t < 11.40) {
+          const mp = easeInOutCubic(norm(t, 10.30, 11.40));
+          cursorX = lerp(leftSubX + 180, btnTargetX + 120, mp);
+          cursorY = lerp(subY + 120, btnTargetY + 27, mp);
+        } else if (t < 12.70) {
+          cursorX = btnTargetX + 160;
+          cursorY = btnTargetY + 27;
+        } else if (t < 13.90) {
+          const mp = easeInOutCubic(norm(t, 12.80, 13.90));
+          cursorX = lerp(btnTargetX + 160, rightSubX + 280, mp);
+          cursorY = lerp(btnTargetY + 27, subY + 340, mp);
+        } else {
+          cursorX = rightSubX + 280;
+          cursorY = subY + 340;
+        }
+
+        // Ripple ring on click (at 12.70s)
+        if (t >= 12.70 && t < 13.30) {
+          const ripP = norm(t, 12.70, 13.30);
+          ctx.save();
+          ctx.strokeStyle = '#D97757';
+          ctx.lineWidth = 3 * (1 - ripP);
+          ctx.beginPath();
+          ctx.arc(btnTargetX + 160, btnTargetY + 27, ripP * 48, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+          isCursorClick = ripP < 0.3;
+        }
+
+        // Draw Mouse Cursor
+        drawVectorMouseCursor(ctx, cursorX, cursorY, isCursorClick);
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 4 (15.00s - 20.00s): "HYBRID REASONING." -> "EXTENDED THINKING TOKENS."
+      // Dual-mode visualization: Instantaneous response vs Extended thinking tokens
+      // ========================================================
+      else if (t >= 15.00 && t < 20.00) {
+        const enterP = easeOutExpo(norm(t, 15.00, 15.60));
+
+        ctx.save();
+
+        // Headline
+        ctx.font = '600 50px Georgia, "Times New Roman", serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Hybrid Reasoning: Instantaneous response meets extended thinking.', W / 2, 142);
+
+        // Reasoning Workbench Card
+        const rw = 1380, rh = 730;
+        const rx = (W - rw) / 2;
+        const ry = 205;
+
+        shadowBaker.drawShadow(ctx, rx, ry, rw, rh, enterP);
+
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, rx, ry, rw, rh, 24);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Top Dual Selector Bar (Instant vs Extended Thinking)
+        const toggleW = 560, toggleH = 48;
+        const toggleX = rx + (rw - toggleW) / 2;
+        const toggleY = ry + 28;
+
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, toggleX, toggleY, toggleW, toggleH, 24);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Active Extended Thinking Pill
+        ctx.fillStyle = '#D97757';
+        roundRect(ctx, toggleX + toggleW / 2, toggleY + 4, toggleW / 2 - 4, toggleH - 8, 20);
+        ctx.fill();
+
+        ctx.font = '700 12px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#5C5B56';
+        ctx.textAlign = 'center';
+        ctx.fillText('INSTANT (0 TOKENS)', toggleX + toggleW * 0.25, toggleY + 24);
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText('EXTENDED THINKING (ACTIVE)', toggleX + toggleW * 0.75, toggleY + 24);
+
+        // Real-Time Token Counter Counter Animation (Smooth exponential surge)
+        const tokenP = easeOutExpo(norm(t, 15.5, 18.5));
+        const currentTokens = Math.floor(lerp(1024, 64000, tokenP));
+
+        // Big Token Display Card
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, rx + 48, ry + 105, rw - 96, 125, 18);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#D97757';
+        ctx.font = '700 12px Menlo, Monaco, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('ALLOCATED THINKING BUDGET', rx + 78, ry + 140);
+
+        ctx.fillStyle = '#141413';
+        ctx.font = '800 52px "InterLocal", sans-serif';
+        ctx.fillText(`${currentTokens.toLocaleString()} / 128,000 TOKENS`, rx + 78, ry + 195);
+
+        // Glowing progress bar under token counter
+        const barW = rw - 96 - 60;
+        const barH = 8;
+        ctx.fillStyle = '#E8E6DC';
+        roundRect(ctx, rx + 78, ry + 215, barW, barH, 4);
+        ctx.fill();
+
+        ctx.fillStyle = '#D97757';
+        roundRect(ctx, rx + 78, ry + 215, barW * (currentTokens / 128000), barH, 4);
+        ctx.fill();
+
+        // Expanding Thought Stream Box (<thinking> collapsible specimen)
+        const thinkY = ry + 255;
+        const thinkH = rh - 280;
+
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, rx + 48, thinkY, rw - 96, thinkH, 18);
+        ctx.fill();
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Thinking Header
+        ctx.fillStyle = '#D97757';
+        ctx.font = '700 13px Menlo, Monaco, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('<thinking>', rx + 78, thinkY + 36);
+
+        // Animated thought steps appearing sequentially
+        const thoughts = [
+          { time: 15.6, text: '• Formalizing mathematical model constraints and verifying theorem bounds...' },
+          { time: 16.2, text: '• Simulating edge conditions across 10,000 asynchronous branch evaluations...' },
+          { time: 17.0, text: '• Pruning non-optimal algorithmic paths: rejecting O(N^2) in favor of O(N log N)...' },
+          { time: 17.8, text: '• Verifying deterministic memory layout and zero garbage collection pressure...' },
+          { time: 18.5, text: '• Architecture optimized. Ready to synthesize production implementation.' }
+        ];
+
+        thoughts.forEach((th, idx) => {
+          if (t >= th.time) {
+            const thAlpha = easeOutExpo(norm(t, th.time, th.time + 0.35));
+            ctx.save();
+            ctx.globalAlpha = thAlpha;
+            ctx.fillStyle = idx === thoughts.length - 1 ? '#788C5D' : '#141413';
+            ctx.font = idx === thoughts.length - 1 ? '700 15px Menlo, Monaco, monospace' : '500 15px Menlo, Monaco, monospace';
+            ctx.fillText(th.text, rx + 78, thinkY + 80 + idx * 42);
+            ctx.restore();
+          }
+        });
+
+        // Closing tag
+        if (t >= 18.8) {
+          ctx.fillStyle = '#D97757';
+          ctx.font = '700 13px Menlo, Monaco, monospace';
+          ctx.fillText('</thinking>', rx + 78, thinkY + 80 + thoughts.length * 42 + 10);
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 5 (20.00s - 25.00s): "WARM EDITORIAL CRAFT." -> "ZERO SLOP."
+      // Tactile letterpress emboss, Swiss Golden Ratio proportions, anti-slop manifesto
+      // ========================================================
+      else if (t >= 20.00 && t < 25.00) {
+        const enterP = easeOutExpo(norm(t, 20.00, 20.70));
+        const strikeP = easeOutQuart(norm(t, 22.60, 23.40));
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2 + 10);
+
+        // Huge Specimen Plaque
+        const pw = 1420, ph = 740;
+        shadowBaker.drawShadow(ctx, -pw / 2, -ph / 2, pw, ph, enterP);
+
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, -pw / 2, -ph / 2, pw, ph, 26);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Top Category Tag
+        ctx.fillStyle = '#FDF3EE';
+        roundRect(ctx, -pw / 2 + 54, -ph / 2 + 48, 230, 32, 16);
+        ctx.fill();
+        ctx.fillStyle = '#D97757';
+        ctx.font = '700 12px Menlo, Monaco, monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('THE DESIGN PHILOSOPHY', -pw / 2 + 76, -ph / 2 + 64);
+
+        // Line 1: WARM EDITORIAL CRAFT.
+        ctx.textAlign = 'center';
+        ctx.font = '600 84px Georgia, "Times New Roman", serif';
+        ctx.fillStyle = '#141413';
+        ctx.fillText('Warm Editorial Craft.', 0, -ph / 2 + 175);
+
+        // Line 2: ZERO AI SLOP.
+        ctx.font = '800 96px "AntonLocal", "InterLocal", sans-serif';
+        ctx.fillStyle = '#141413';
+        ctx.fillText('ZERO SLOP.', 0, -ph / 2 + 285);
+
+        // Strike-through rule across "AI SLOP" or underline
+        if (strikeP > 0) {
+          const ruleW = 620 * strikeP;
+          ctx.fillStyle = '#D97757';
+          ctx.fillRect(-ruleW / 2, -ph / 2 + 350, ruleW, 6);
+        }
+
+        // 3 Tactile Anti-Slop Manifesto Tiles Below
+        const pillars = [
+          {
+            tag: 'STRICT RESTRAINT',
+            title: '5% Accent Rule',
+            desc: 'Anthropic Terracotta used exclusively for deliberate focus, never decorative noise.'
+          },
+          {
+            tag: 'TACTILE TEXTURE',
+            title: 'Letterpress Depth',
+            desc: 'Multi-tier zero-CPU shadow baking that mirrors physically stamped ink on warm paper.'
+          },
+          {
+            tag: 'REPRODUCIBLE DOM',
+            title: 'Deterministic Code',
+            desc: 'Zero timeline scrubbing drift. Every single millisecond is pure mathematical logic.'
+          }
+        ];
+
+        const cardW = 390, cardH = 220;
+        pillars.forEach((p, idx) => {
+          const cx = -pw / 2 + 65 + idx * 440;
+          const cy = -ph / 2 + 420;
+
+          ctx.fillStyle = '#FAF8F5';
+          roundRect(ctx, cx, cy, cardW, cardH, 18);
+          ctx.fill();
+          ctx.strokeStyle = idx === 0 ? '#D97757' : '#E8E6DC';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.fillStyle = idx === 0 ? '#D97757' : '#5C5B56';
+          ctx.font = '700 11px Menlo, Monaco, monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(p.tag, cx + 24, cy + 34);
+
+          ctx.fillStyle = '#141413';
+          ctx.font = '800 22px "InterLocal", sans-serif';
+          ctx.fillText(p.title, cx + 24, cy + 76);
+
+          ctx.fillStyle = '#5C5B56';
+          ctx.font = '500 14px "InterLocal", sans-serif';
+          // Multi-line wrap
+          const words = p.desc.split(' ');
+          let line = '', lineY = cy + 120;
+          words.forEach(w => {
+            const test = line + w + ' ';
+            if (ctx.measureText(test).width > cardW - 48) {
+              ctx.fillText(line, cx + 24, lineY);
+              line = w + ' ';
+              lineY += 22;
+            } else {
+              line = test;
+            }
+          });
+          ctx.fillText(line, cx + 24, lineY);
+        });
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 6 (25.00s - 30.00s): SOVEREIGN MASTER LOCKUP "ANTHROPIC // CLAUDE."
+      // Terracotta sunburst aperture mark, monumental serif lockup, terminal CTA
+      // ========================================================
+      else {
+        const lockupP = spring(norm(t, 25.00, 26.20), 12, 0.70);
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2 + 10);
+
+        // Embossed Linen Master Plaque
+        const mw = 1320, mh = 680;
+        shadowBaker.drawShadow(ctx, -mw / 2, -mh / 2, mw, mh, lockupP);
+
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, -mw / 2, -mh / 2, mw, mh, 28);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // 1. Terracotta Geometric Sunburst Aperture Mark
+        const sunRadius = lerp(32, 60, lockupP);
+        const sunRot = t * 0.15;
+        drawAnthropicSunburst(ctx, 0, -180, sunRadius, sunRot, '#D97757');
+
+        // 2. Sovereign Master Headline: "ANTHROPIC // CLAUDE"
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '800 32px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#D97757';
+        ctx.fillText('A N T H R O P I C', 0, -85);
+
+        ctx.font = '600 112px Georgia, "Times New Roman", serif';
+        ctx.fillStyle = '#141413';
+        ctx.fillText('Claude 3.7 Sonnet', 0, 0);
+
+        // 3. Subtitle Tagline
+        ctx.font = '600 24px "InterLocal", sans-serif';
+        ctx.fillStyle = '#5C5B56';
+        ctx.fillText('Thought to code. Reasoned to perfection.', 0, 75);
+
+        // 4. Clean Terminal Command Pill
+        const pillW = 680, pillH = 58;
+        ctx.fillStyle = '#FAF8F5';
+        roundRect(ctx, -pillW / 2, 130, pillW, pillH, 29);
+        ctx.fill();
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.font = '700 18px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#141413';
+        ctx.fillText('$ claude --model claude-3-7-sonnet', 0, 159);
+
+        // 5. Specimen Footer
+        ctx.font = '600 12px Menlo, Monaco, monospace';
+        ctx.fillStyle = '#9E9D95';
+        ctx.fillText('SAN FRANCISCO, CA • GENERAL AVAILABILITY 2026', 0, 240);
+
+        ctx.restore();
+      }
+
+      // Always render Clean Top Bar on top of every frame
+      drawCleanTopBar(ctx);
+    };
+
+    // ========================================================
+    // INTERACTIVE CONTROLLER (Browser Preview Mode)
+    // ========================================================
+    const slider = document.getElementById('time-slider');
+    const playPauseBtn = document.getElementById('play-pause-btn');
+    const timecodeDisplay = document.getElementById('timecode-display');
+    const jumpBtns = document.querySelectorAll('.jump-btn');
+
+    let currentTime = 0.0;
+    let isPlaying = false;
+    let lastAnimTime = performance.now();
+
+    function updateTime(t) {
+      currentTime = clamp(t, 0, 30.0);
+      slider.value = currentTime;
+      const s = Math.floor(currentTime);
+      const ms = Math.floor((currentTime - s) * 100);
+      timecodeDisplay.textContent = `${String(s).padStart(2, '0')}:${String(ms).padStart(2, '0')}s`;
+      window.__renderFrameAt(currentTime);
+    }
+
+    slider.addEventListener('input', (e) => {
+      isPlaying = false;
+      playPauseBtn.textContent = '▶ PLAY';
+      updateTime(parseFloat(e.target.value));
+    });
+
+    playPauseBtn.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      playPauseBtn.textContent = isPlaying ? '❚❚ PAUSE' : '▶ PLAY';
+      if (isPlaying && currentTime >= 30.0) currentTime = 0;
+      lastAnimTime = performance.now();
+    });
+
+    jumpBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        isPlaying = false;
+        playPauseBtn.textContent = '▶ PLAY';
+        updateTime(parseFloat(btn.dataset.time));
+      });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        playPauseBtn.click();
+      }
+    });
+
+    function animationLoop(now) {
+      if (isPlaying) {
+        const dt = (now - lastAnimTime) / 1000;
+        currentTime += dt;
+        if (currentTime > 30.0) {
+          currentTime = 0.0;
+        }
+        updateTime(currentTime);
+      }
+      lastAnimTime = now;
+      requestAnimationFrame(animationLoop);
+    }
+    requestAnimationFrame(animationLoop);
+
+    // Initial Paint at 0.0s
+    updateTime(0.0);
+  </script>
+</body>
+</html>

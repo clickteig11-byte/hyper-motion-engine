@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Build with Caleb — High-Velocity Launch Video (30s Human Kinetic Reel)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <script src="caleb-actual-photo-data.js"></script>
+  <style>
+    @font-face {
+      font-family: 'AntonLocal';
+      src: url('../public/fonts/Anton-Regular.ttf') format('truetype');
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: 'InterLocal';
+      src: url('../public/fonts/InterVariable.woff2') format('woff2');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #E5E3DC;
+      font-family: 'InterLocal', 'Inter', -apple-system, sans-serif;
+      color: #111111;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #stage-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      box-shadow: 0 40px 120px rgba(17, 24, 39, 0.18);
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid #D6D3CB;
+    }
+
+    canvas#motion-stage {
+      display: block;
+      width: 1920px;
+      height: 1080px;
+      background: #F6F5F1;
+    }
+
+    /* Floating Scrub Bar */
+    #playback-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(20px);
+      border: 1.5px solid #0052FF;
+      border-radius: 9999px;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      z-index: 1000;
+      box-shadow: 0 16px 40px rgba(0, 82, 255, 0.14);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+
+    button.ctrl-btn {
+      background: #0052FF;
+      color: #FFFFFF;
+      border: none;
+      padding: 7px 18px;
+      border-radius: 9999px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      transition: transform 0.1s, background-color 0.1s;
+    }
+    button.ctrl-btn:hover { background: #003CD0; }
+    button.ctrl-btn:active { transform: scale(0.96); }
+
+    .jump-btn {
+      background: #F6F5F1;
+      color: #111111;
+      border: 1px solid #E3E0D8;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .jump-btn:hover { background: #E5EAFF; border-color: #0052FF; }
+
+    input[type=range] {
+      width: 280px;
+      accent-color: #0052FF;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <canvas id="motion-stage" width="1920" height="1080"></canvas>
+  </div>
+
+  <div id="playback-bar">
+    <button class="ctrl-btn" id="btn-play-toggle">PLAY / PAUSE</button>
+    <input type="range" id="time-slider" min="0" max="30.0" step="0.0333" value="0">
+    <span id="time-label" style="font-weight: 700; min-width: 90px;">00:00.00</span>
+    <div style="display: flex; gap: 5px;">
+      <button class="jump-btn" data-time="0.0">1. HOOK</button>
+      <button class="jump-btn" data-time="4.5">2. CALEB</button>
+      <button class="jump-btn" data-time="9.5">3. NO SLOP</button>
+      <button class="jump-btn" data-time="14.5">4. HOW</button>
+      <button class="jump-btn" data-time="19.5">5. 52X</button>
+      <button class="jump-btn" data-time="24.5">6. LOCKUP</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('motion-stage');
+    const ctx = canvas.getContext('2d');
+    const container = document.getElementById('stage-container');
+    const slider = document.getElementById('time-slider');
+    const timeLabel = document.getElementById('time-label');
+    const btnPlay = document.getElementById('btn-play-toggle');
+
+    const W = 1920;
+    const H = 1080;
+    const TOTAL_DURATION = 30.0;
+
+    // Responsive Canvas Scaling
+    function resizeStage() {
+      const availW = window.innerWidth - 60;
+      const availH = window.innerHeight - 120;
+      const scale = Math.min(availW / W, availH / H, 1.0);
+      container.style.transform = `scale(${scale})`;
+    }
+    window.addEventListener('resize', resizeStage);
+    resizeStage();
+
+    // ========================================================
+    // PRELOAD CALEB ACTUAL PHOTO (FROM BASE64 SCRIPT)
+    // ========================================================
+    const calebPhoto = new Image();
+    calebPhoto.crossOrigin = 'anonymous';
+    let photoLoaded = false;
+    calebPhoto.onload = () => { photoLoaded = true; };
+    if (typeof window.CALEB_ACTUAL_PHOTO_DATA !== 'undefined' && window.CALEB_ACTUAL_PHOTO_DATA.length > 100) {
+      calebPhoto.src = window.CALEB_ACTUAL_PHOTO_DATA;
+      photoLoaded = true;
+    } else {
+      calebPhoto.src = '../public/images/caleb-portrait-original.png';
+    }
+
+    // ========================================================
+    // ZERO-DISTORTION COVER IMAGE HELPER (PRESERVES ASPECT RATIO)
+    // ========================================================
+    function drawCoverImage(ctx, img, dx, dy, dw, dh, radius = 0) {
+      if (!img || !img.complete) return;
+      const nw = img.naturalWidth || img.width;
+      const nh = img.naturalHeight || img.height;
+      if (!nw || !nh) return;
+
+      const srcRatio = nw / nh;
+      const dstRatio = dw / dh;
+      let sx, sy, sw, sh;
+
+      if (srcRatio > dstRatio) {
+        sh = nh;
+        sw = nh * dstRatio;
+        sx = (nw - sw) / 2;
+        sy = 0;
+      } else {
+        sw = nw;
+        sh = nw / dstRatio;
+        sx = 0;
+        // Bias slightly towards top to keep Caleb's face perfectly centered
+        sy = Math.max(0, (nh - sh) * 0.16);
+      }
+
+      ctx.save();
+      if (radius > 0) {
+        ctx.beginPath();
+        ctx.roundRect(dx, dy, dw, dh, radius);
+        ctx.clip();
+      }
+      ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+      ctx.restore();
+    }
+
+    // ========================================================
+    // MATHEMATICAL EASINGS & SNAPPY SPRING KINETICS
+    // ========================================================
+    const clamp = (v, min = 0, max = 1) => Math.max(min, Math.min(max, v));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    // Fast spring punch: snappy overshoot without sluggishness
+    function springPunch(t, start, dur = 0.16, s = 1.4) {
+      if (t <= start) return 0;
+      const p = Math.min(1, (t - start) / dur);
+      const p1 = p - 1;
+      return p1 * p1 * ((s + 1) * p1 + s) + 1;
+    }
+
+    function easeOutExpo(x) {
+      return x === 1 ? 1 : 1 - Math.pow(2, -10 * clamp(x));
+    }
+
+    // ========================================================
+    // FAST 9-SLICE SHADOW PRE-BAKER
+    // ========================================================
+    const shadowCanvas = document.createElement('canvas');
+    shadowCanvas.width = 300;
+    shadowCanvas.height = 300;
+    const sCtx = shadowCanvas.getContext('2d');
+    sCtx.shadowColor = 'rgba(17, 24, 39, 0.14)';
+    sCtx.shadowBlur = 36;
+    sCtx.shadowOffsetY = 14;
+    sCtx.fillStyle = '#FFFFFF';
+    sCtx.beginPath();
+    sCtx.roundRect(50, 50, 200, 200, 20);
+    sCtx.fill();
+
+    function drawFastShadow(ctx, x, y, w, h) {
+      const margin = 50;
+      const srcW = 200;
+      const srcH = 200;
+      ctx.drawImage(shadowCanvas, 0, 0, margin, margin, x - margin, y - margin, margin, margin);
+      ctx.drawImage(shadowCanvas, margin, 0, srcW, margin, x, y - margin, w, margin);
+      ctx.drawImage(shadowCanvas, margin + srcW, 0, margin, margin, x + w, y - margin, margin, margin);
+      ctx.drawImage(shadowCanvas, 0, margin, margin, srcH, x - margin, y, margin, h);
+      ctx.drawImage(shadowCanvas, margin, margin, srcW, srcH, x, y, w, h);
+      ctx.drawImage(shadowCanvas, margin + srcW, margin, margin, srcH, x + w, y, margin, h);
+      ctx.drawImage(shadowCanvas, 0, margin + srcH, margin, margin, x - margin, y + h, margin, margin);
+      ctx.drawImage(shadowCanvas, margin, margin + srcH, srcW, margin, x, y + h, w, margin);
+      ctx.drawImage(shadowCanvas, margin + srcW, margin + srcH, margin, margin, x + w, y + h, margin, margin);
+    }
+
+    // ========================================================
+    // ZERO-OVERLAP STACKED KINETIC TYPOGRAPHY ENGINE
+    // ========================================================
+    // Renders single lines or stacked phrases word-by-word with ZERO overlap
+    function renderWordLine(ctx, cfg) {
+      const { words, startTimes, t, x, y, fontSize = 140, align = 'center', color = '#111111', bluePeriod = true } = cfg;
+      ctx.save();
+      ctx.font = `400 ${fontSize}px AntonLocal, Anton, Impact, sans-serif`;
+      ctx.textBaseline = 'middle';
+
+      const spaceW = fontSize * 0.38; // Generous space so words never touch
+      const wordMetrics = words.map(w => ({ text: w, width: ctx.measureText(w).width }));
+      const totalW = wordMetrics.reduce((sum, m) => sum + m.width, 0) + (words.length - 1) * spaceW;
+
+      let startX = x;
+      if (align === 'center') startX = x - totalW / 2;
+      else if (align === 'right') startX = x - totalW;
+
+      let curX = startX;
+      for (let i = 0; i < words.length; i++) {
+        const wTime = startTimes[i];
+        if (t < wTime) {
+          curX += wordMetrics[i].width + spaceW;
+          continue;
+        }
+
+        const elapsed = t - wTime;
+        // Fast snap: scale 1.25 -> 1.0 in just 0.10s
+        const punch = springPunch(t, wTime, 0.12, 1.25);
+        const scale = lerp(1.25, 1.0, clamp(punch));
+        const alpha = clamp(elapsed / 0.04);
+        const isActive = (elapsed >= 0 && elapsed < 0.28);
+
+        ctx.save();
+        ctx.translate(curX + wordMetrics[i].width / 2, y);
+        ctx.scale(scale, scale);
+        ctx.globalAlpha = alpha;
+
+        const wordText = wordMetrics[i].text;
+        const hasPeriod = wordText.endsWith('.');
+        const cleanWord = hasPeriod ? wordText.slice(0, -1) : wordText;
+
+        ctx.fillStyle = isActive ? '#0052FF' : color;
+        ctx.textAlign = 'left';
+        const cleanW = ctx.measureText(cleanWord).width;
+        ctx.fillText(cleanWord, -wordMetrics[i].width / 2, 0);
+
+        if (hasPeriod && bluePeriod) {
+          ctx.fillStyle = '#0052FF';
+          ctx.fillText('.', -wordMetrics[i].width / 2 + cleanW, 0);
+        }
+
+        ctx.restore();
+        curX += wordMetrics[i].width + spaceW;
+      }
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // DYNAMIC 3D CAMERA SPLINE (30.00s CONTINUOUS MOMENTUM)
+    // ========================================================
+    function getCamera(t) {
+      if (t < 4.5) {
+        // Act 1: Hook zoom & slight tilt
+        const p = clamp(t / 4.5);
+        return {
+          x: 960,
+          y: 540,
+          zoom: lerp(0.96, 1.12, easeOutExpo(p)),
+          rotation: (Math.sin(t * 4) * 0.004) * (1 - p)
+        };
+      } else if (t < 9.5) {
+        // Act 2: Pan right to Caleb portrait
+        const p = clamp((t - 4.5) / 5.0);
+        return {
+          x: lerp(960, 1020, easeOutExpo(p)),
+          y: lerp(540, 535, easeOutExpo(p)),
+          zoom: lerp(1.12, 1.00, easeOutExpo(p)),
+          rotation: 0.003 * (1 - p)
+        };
+      } else if (t < 14.5) {
+        // Act 3: Fast whip to center for Anti-Slop
+        const p = clamp((t - 9.5) / 5.0);
+        return {
+          x: lerp(1020, 960, easeOutExpo(p)),
+          y: lerp(535, 540, easeOutExpo(p)),
+          zoom: lerp(1.00, 1.18, easeOutExpo(p)),
+          rotation: -0.004 * (1 - p)
+        };
+      } else if (t < 19.5) {
+        // Act 4: Cascade pipeline
+        const p = clamp((t - 14.5) / 5.0);
+        return {
+          x: lerp(960, 980, easeOutExpo(p)),
+          y: lerp(540, 545, easeOutExpo(p)),
+          zoom: lerp(1.18, 1.05, easeOutExpo(p)),
+          rotation: 0
+        };
+      } else if (t < 24.5) {
+        // Act 5: 52X velocity surge
+        const p = clamp((t - 19.5) / 5.0);
+        return {
+          x: 960,
+          y: 540,
+          zoom: lerp(1.05, 1.30, easeOutExpo(p)),
+          rotation: 0
+        };
+      } else {
+        // Act 6: Master lockup settle
+        const p = clamp((t - 24.5) / 5.5);
+        return {
+          x: 960,
+          y: 540,
+          zoom: lerp(1.30, 1.00, easeOutExpo(p)),
+          rotation: 0
+        };
+      }
+    }
+
+    // ========================================================
+    // MINIMAL TOP BAR: ONLY THE NAME, NO FRAME COUNTER!
+    // ========================================================
+    function drawMinimalTopBar(ctx) {
+      ctx.save();
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      // Brand Name with Electric Blue Period
+      ctx.font = '700 32px AntonLocal, Anton, Impact, sans-serif';
+      ctx.fillStyle = '#111111';
+      ctx.fillText('BUILD WITH CALEB', 80, 56);
+
+      const brandW = ctx.measureText('BUILD WITH CALEB').width;
+      ctx.fillStyle = '#0052FF';
+      ctx.fillText('.', 80 + brandW, 56);
+
+      ctx.font = '700 12px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#555861';
+      ctx.fillText('// CODE / IDEAS / EXPERIMENTS', 80 + brandW + 28, 56);
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // MASTER DETERMINISTIC FRAME RENDERER (30.00s @ 60FPS)
+    // ========================================================
+    window.__renderFrameAt = function(t) {
+      t = clamp(t, 0, TOTAL_DURATION);
+
+      // 1. Background Warm Ivory Paper Ground
+      ctx.fillStyle = '#F6F5F1';
+      ctx.fillRect(0, 0, W, H);
+
+      // Hairline Grid Lines
+      ctx.strokeStyle = '#E3E0D8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(80, 0); ctx.lineTo(80, H);
+      ctx.moveTo(W - 80, 0); ctx.lineTo(W - 80, H);
+      ctx.moveTo(0, 92); ctx.lineTo(W, 92);
+      ctx.moveTo(0, H - 92); ctx.lineTo(W, H - 92);
+      ctx.stroke();
+
+      // 2. Camera Transformations
+      const cam = getCamera(t);
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(cam.zoom, cam.zoom);
+      ctx.rotate(cam.rotation);
+      ctx.translate(-cam.x, -cam.y);
+
+      // ========================================================
+      // ACT 1 (0.00s - 4.50s): THE HOOK (STOP KEYFRAMING)
+      // ========================================================
+      if (t < 4.70) {
+        const actAlpha = clamp(1.0 - (t - 4.20) / 0.40);
+        ctx.save();
+        ctx.globalAlpha = actAlpha;
+
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#0052FF';
+        ctx.textAlign = 'center';
+        ctx.fillText('// 01 • THE PROBLEM', W / 2, H / 2 - 190);
+
+        // Line 1: STOP (0.30s)
+        renderWordLine(ctx, {
+          words: ['STOP'],
+          startTimes: [0.30],
+          t: t,
+          x: W / 2,
+          y: H / 2 - 90,
+          fontSize: 180,
+          align: 'center',
+          color: '#111111'
+        });
+
+        // Line 2: KEYFRAMING. (0.90s)
+        renderWordLine(ctx, {
+          words: ['KEYFRAMING.'],
+          startTimes: [0.90],
+          t: t,
+          x: W / 2,
+          y: H / 2 + 70,
+          fontSize: 180,
+          align: 'center',
+          color: '#111111',
+          bluePeriod: true
+        });
+
+        // Subtext: NO MORE TEDIOUS EDITS. JUST CODE.
+        if (t >= 1.80) {
+          renderWordLine(ctx, {
+            words: ['NO MORE', 'TEDIOUS EDITS.'],
+            startTimes: [1.80, 2.40],
+            t: t,
+            x: W / 2,
+            y: H / 2 + 200,
+            fontSize: 48,
+            align: 'center',
+            color: '#555861'
+          });
+        }
+
+        if (t >= 3.20) {
+          renderWordLine(ctx, {
+            words: ['JUST', 'CODE.'],
+            startTimes: [3.20, 3.60],
+            t: t,
+            x: W / 2,
+            y: H / 2 + 265,
+            fontSize: 54,
+            align: 'center',
+            color: '#0052FF',
+            bluePeriod: true
+          });
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 2 (4.50s - 9.50s): INTRODUCING CALEB (HUMAN & REAL)
+      // ========================================================
+      if (t >= 4.40 && t < 9.70) {
+        const inAlpha = clamp((t - 4.40) / 0.25);
+        const outAlpha = clamp(1.0 - (t - 9.20) / 0.35);
+        const actAlpha = inAlpha * outAlpha;
+
+        ctx.save();
+        ctx.globalAlpha = actAlpha;
+
+        // Left Side: Authentic Human Voice from Caleb's Site
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#0052FF';
+        ctx.textAlign = 'left';
+        ctx.fillText('// 02 • THE BUILDER', 140, 240);
+
+        // Stacked Line 1: HI, I'M CALEB.
+        renderWordLine(ctx, {
+          words: ['HI,', "I'M", 'CALEB.'],
+          startTimes: [4.80, 5.10, 5.40],
+          t: t,
+          x: 140,
+          y: 340,
+          fontSize: 120,
+          align: 'left',
+          color: '#111111',
+          bluePeriod: true
+        });
+
+        // Stacked Line 2: I TURN IDEAS
+        if (t >= 6.20) {
+          renderWordLine(ctx, {
+            words: ['I TURN', 'IDEAS'],
+            startTimes: [6.20, 6.60],
+            t: t,
+            x: 140,
+            y: 470,
+            fontSize: 90,
+            align: 'left',
+            color: '#111111'
+          });
+        }
+
+        // Stacked Line 3: INTO REAL WEBSITES.
+        if (t >= 7.00) {
+          renderWordLine(ctx, {
+            words: ['INTO REAL', 'WEBSITES.'],
+            startTimes: [7.00, 7.40],
+            t: t,
+            x: 140,
+            y: 570,
+            fontSize: 90,
+            align: 'left',
+            color: '#111111',
+            bluePeriod: true
+          });
+        }
+
+        // Stacked Line 4: AND APPS. HERE'S HOW.
+        if (t >= 7.80) {
+          renderWordLine(ctx, {
+            words: ['AND APPS.', "HERE'S", 'HOW.'],
+            startTimes: [7.80, 8.20, 8.60],
+            t: t,
+            x: 140,
+            y: 670,
+            fontSize: 70,
+            align: 'left',
+            color: '#0052FF',
+            bluePeriod: true
+          });
+        }
+
+        // Right Side: Caleb's ACTUAL Photo (ZERO DISTORTION / PRESERVES ASPECT RATIO)
+        if (t >= 5.10) {
+          const punch = springPunch(t, 5.10, 0.25, 1.35);
+          const cardX = lerp(2200, 1180, punch);
+          const cardY = 170;
+          const cardW = 580;
+          const cardH = 720;
+          const rot = lerp(0.06, -0.015, clamp(punch));
+
+          ctx.save();
+          ctx.translate(cardX + cardW / 2, cardY + cardH / 2);
+          ctx.rotate(rot);
+          ctx.translate(-cardW / 2, -cardH / 2);
+
+          // Fast 9-Slice Soft Shadow
+          drawFastShadow(ctx, 0, 0, cardW, cardH);
+
+          // White Polaroid Card Body
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.roundRect(0, 0, cardW, cardH, 20);
+          ctx.fill();
+          ctx.strokeStyle = '#E3E0D8';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          // Render Caleb Photo using drawCoverImage (Strictly Aspect-Preserved, Zero Stretch)
+          drawCoverImage(ctx, calebPhoto, 24, 24, cardW - 48, cardH - 120, 14);
+
+          // Card Footer
+          ctx.fillStyle = '#111111';
+          ctx.font = '800 24px AntonLocal, Anton, sans-serif';
+          ctx.fillText('CALEB LICKTEIG', 32, cardH - 52);
+
+          ctx.fillStyle = '#0052FF';
+          ctx.font = '700 13px "JetBrains Mono", monospace';
+          ctx.fillText('// BUILDER & CREATOR • BUILDWITHCALEB.COM', 32, cardH - 26);
+
+          ctx.restore();
+        }
+
+        // High-Velocity Cobalt Blue Ribbon Ticker at Bottom
+        const ribbonY = H - 150;
+        const ribbonOffset = (t - 4.50) * 480;
+
+        ctx.save();
+        ctx.fillStyle = '#0052FF';
+        ctx.fillRect(0, ribbonY, W, 64);
+
+        ctx.font = '800 18px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textBaseline = 'middle';
+        const ticker = 'EVERYTHING BEHIND THE BUILDS. CODE / LEARN / BUILD / REPEAT // REAL EXPERIMENTS // 100% INDIE // ';
+        const tickerW = ctx.measureText(ticker).width;
+        for (let xPos = -(ribbonOffset % tickerW) - tickerW; xPos < W + tickerW; xPos += tickerW) {
+          ctx.fillText(ticker, xPos, ribbonY + 32);
+        }
+        ctx.restore();
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 3 (9.50s - 14.50s): ZERO AI SLOP MANIFESTO
+      // ========================================================
+      if (t >= 9.40 && t < 14.70) {
+        const inAlpha = clamp((t - 9.40) / 0.22);
+        const outAlpha = clamp(1.0 - (t - 14.20) / 0.35);
+        const actAlpha = inAlpha * outAlpha;
+
+        ctx.save();
+        ctx.globalAlpha = actAlpha;
+
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#0052FF';
+        ctx.textAlign = 'center';
+        ctx.fillText('// 03 • THE ANTI-SLOP MANIFESTO', W / 2, 220);
+
+        // Giant Stacked Headline: ZERO AI SLOP.
+        renderWordLine(ctx, {
+          words: ['ZERO'],
+          startTimes: [9.80],
+          t: t,
+          x: W / 2,
+          y: 330,
+          fontSize: 160,
+          align: 'center',
+          color: '#111111'
+        });
+
+        renderWordLine(ctx, {
+          words: ['AI', 'SLOP.'],
+          startTimes: [10.40, 10.80],
+          t: t,
+          x: W / 2,
+          y: 470,
+          fontSize: 160,
+          align: 'center',
+          color: '#111111',
+          bluePeriod: true
+        });
+
+        // Human Stance Points: NO FAKE DEMOS. NO FILLER JARGON.
+        if (t >= 11.20) {
+          renderWordLine(ctx, {
+            words: ['NO FAKE DEMOS.'],
+            startTimes: [11.20],
+            t: t,
+            x: W / 2,
+            y: 600,
+            fontSize: 56,
+            align: 'center',
+            color: '#555861',
+            bluePeriod: true
+          });
+        }
+
+        if (t >= 12.00) {
+          renderWordLine(ctx, {
+            words: ['NO FILLER JARGON.'],
+            startTimes: [12.00],
+            t: t,
+            x: W / 2,
+            y: 670,
+            fontSize: 56,
+            align: 'center',
+            color: '#555861',
+            bluePeriod: true
+          });
+        }
+
+        // Punch Climax: REAL CODE. REAL BUILDS.
+        if (t >= 13.00) {
+          renderWordLine(ctx, {
+            words: ['REAL CODE.', 'REAL BUILDS.'],
+            startTimes: [13.00, 13.70],
+            t: t,
+            x: W / 2,
+            y: 770,
+            fontSize: 72,
+            align: 'center',
+            color: '#0052FF',
+            bluePeriod: true
+          });
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 4 (14.50s - 19.50s): HOW I BUILD (3-STEP PIPELINE)
+      // ========================================================
+      if (t >= 14.40 && t < 19.70) {
+        const inAlpha = clamp((t - 14.40) / 0.22);
+        const outAlpha = clamp(1.0 - (t - 19.20) / 0.35);
+        const actAlpha = inAlpha * outAlpha;
+
+        ctx.save();
+        ctx.globalAlpha = actAlpha;
+
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#0052FF';
+        ctx.textAlign = 'center';
+        ctx.fillText('// 04 • HOW I BUILD', W / 2, 220);
+
+        renderWordLine(ctx, {
+          words: ['THE 3-STEP', 'PROCESS.'],
+          startTimes: [14.60, 14.90],
+          t: t,
+          x: W / 2,
+          y: 310,
+          fontSize: 90,
+          align: 'center',
+          color: '#111111',
+          bluePeriod: true
+        });
+
+        // 3 Cards: 01 / IDEA, 02 / CODE, 03 / FILM
+        const steps = [
+          { num: '01 / IDEA', title: 'START WITH TASTE', sub: 'High craft, zero slop', time: 15.00, x: 260 },
+          { num: '02 / CODE', title: 'WRITE THE REPO', sub: 'Deterministic & fast', time: 16.20, x: 740 },
+          { num: '03 / FILM', title: 'LAUNCH IN MOTION', sub: 'Pure 60fps code reel', time: 17.40, x: 1220 }
+        ];
+
+        steps.forEach(st => {
+          if (t >= st.time) {
+            const punch = springPunch(t, st.time, 0.20, 1.3);
+            const cardY = lerp(850, 430, punch);
+            const cardW = 440;
+            const cardH = 260;
+
+            ctx.save();
+            ctx.translate(st.x, cardY);
+
+            drawFastShadow(ctx, 0, 0, cardW, cardH);
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.roundRect(0, 0, cardW, cardH, 16);
+            ctx.fill();
+            ctx.strokeStyle = '#E3E0D8';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.font = '800 16px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#0052FF';
+            ctx.textAlign = 'left';
+            ctx.fillText(st.num, 32, 50);
+
+            ctx.font = '400 42px AntonLocal, Anton, sans-serif';
+            ctx.fillStyle = '#111111';
+            ctx.fillText(st.title, 32, 120);
+
+            ctx.font = '600 18px "InterLocal", sans-serif';
+            ctx.fillStyle = '#555861';
+            ctx.fillText(st.sub, 32, 175);
+
+            ctx.restore();
+          }
+        });
+
+        if (t >= 18.50) {
+          renderWordLine(ctx, {
+            words: ['BUILT', 'IN PUBLIC.'],
+            startTimes: [18.50, 18.85],
+            t: t,
+            x: W / 2,
+            y: 770,
+            fontSize: 64,
+            align: 'center',
+            color: '#0052FF',
+            bluePeriod: true
+          });
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 5 (19.50s - 24.50s): EXTREME VELOCITY & 52X FASTER
+      // ========================================================
+      if (t >= 19.40 && t < 24.70) {
+        const inAlpha = clamp((t - 19.40) / 0.18);
+        const outAlpha = clamp(1.0 - (t - 24.20) / 0.25);
+        const actAlpha = inAlpha * outAlpha;
+
+        ctx.save();
+        ctx.globalAlpha = actAlpha;
+
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#0052FF';
+        ctx.textAlign = 'center';
+        ctx.fillText('// 05 • PURE SPEED', W / 2, 220);
+
+        // Giant 52X
+        if (t >= 19.80) {
+          const punch = springPunch(t, 19.80, 0.18, 1.5);
+          ctx.save();
+          ctx.translate(W / 2, 380);
+          ctx.scale(punch, punch);
+          ctx.font = '400 240px AntonLocal, Anton, Impact, sans-serif';
+          ctx.fillStyle = '#0052FF';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('52X', 0, 0);
+          ctx.restore();
+        }
+
+        if (t >= 20.60) {
+          renderWordLine(ctx, {
+            words: ['FASTER THAN'],
+            startTimes: [20.60],
+            t: t,
+            x: W / 2,
+            y: 540,
+            fontSize: 80,
+            align: 'center',
+            color: '#111111'
+          });
+        }
+
+        if (t >= 21.30) {
+          renderWordLine(ctx, {
+            words: ['AFTER EFFECTS.'],
+            startTimes: [21.30],
+            t: t,
+            x: W / 2,
+            y: 630,
+            fontSize: 90,
+            align: 'center',
+            color: '#111111',
+            bluePeriod: true
+          });
+        }
+
+        // Rapid Velocity Progress Bar
+        const barW = 760;
+        const barH = 20;
+        const barX = W / 2 - barW / 2;
+        const barY = 720;
+        const barProgress = easeOutExpo(clamp((t - 21.50) / 0.7));
+
+        ctx.fillStyle = '#E3E0D8';
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barW, barH, 10);
+        ctx.fill();
+
+        ctx.fillStyle = '#0052FF';
+        ctx.beginPath();
+        ctx.roundRect(barX, barY, barW * barProgress, barH, 10);
+        ctx.fill();
+
+        if (t >= 22.80) {
+          renderWordLine(ctx, {
+            words: ['60 FPS.', 'PURE CODE.'],
+            startTimes: [22.80, 23.40],
+            t: t,
+            x: W / 2,
+            y: 790,
+            fontSize: 52,
+            align: 'center',
+            color: '#0052FF',
+            bluePeriod: true
+          });
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 6 (24.50s - 30.00s): MASTER CLIMAX & SOVEREIGN LOCKUP
+      // ========================================================
+      if (t >= 24.40) {
+        const inAlpha = clamp((t - 24.40) / 0.20);
+        ctx.save();
+        ctx.globalAlpha = inAlpha;
+
+        // Rapid Strobe (24.80s -> 26.50s)
+        if (t < 26.80) {
+          ctx.font = '700 16px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#0052FF';
+          ctx.textAlign = 'center';
+          ctx.fillText('// 06 • THE LOOP', W / 2, H / 2 - 140);
+
+          renderWordLine(ctx, {
+            words: ['CODE.', 'BUILD.', 'REPEAT.'],
+            startTimes: [24.80, 25.40, 26.00],
+            t: t,
+            x: W / 2,
+            y: H / 2,
+            fontSize: 160,
+            align: 'center',
+            color: '#111111',
+            bluePeriod: true
+          });
+        } else {
+          // Final Sovereign Master Brand Lockup (26.80s - 30.00s)
+          const lockPunch = springPunch(t, 26.80, 0.25, 1.25);
+
+          // Left Side: Sovereign Display Typography
+          ctx.save();
+          ctx.translate(180, 360);
+          ctx.scale(lockPunch, lockPunch);
+
+          ctx.font = '700 16px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#0052FF';
+          ctx.textAlign = 'left';
+          ctx.fillText('// EVERYTHING BEHIND THE BUILDS', 0, 0);
+
+          ctx.font = '400 150px AntonLocal, Anton, Impact, sans-serif';
+          ctx.fillStyle = '#111111';
+          ctx.fillText('BUILD WITH CALEB', 0, 130);
+
+          const finW = ctx.measureText('BUILD WITH CALEB').width;
+          ctx.fillStyle = '#0052FF';
+          ctx.fillText('.', finW, 130);
+
+          // Pulsing halo around period
+          const halo = (t - 26.80) * 1.8;
+          ctx.strokeStyle = 'rgba(0, 82, 255, 0.4)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(finW + 24, 110, 14 + (halo % 2.5) * 10, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // CTA Pill
+          ctx.fillStyle = '#111111';
+          ctx.beginPath();
+          ctx.roundRect(0, 200, 520, 68, 34);
+          ctx.fill();
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '700 19px "JetBrains Mono", monospace';
+          ctx.fillText('WATCH ON YOUTUBE // GITHUB', 38, 242);
+
+          ctx.restore();
+
+          // Right Side: Caleb's Actual Photo Lockup Card (Strictly Aspect-Preserved, Zero Stretch)
+          if (calebPhoto && calebPhoto.complete) {
+            const photoPunch = springPunch(t, 27.00, 0.22, 1.2);
+            const pW = 480;
+            const pH = 600;
+            const pX = 1260;
+            const pY = 220;
+
+            ctx.save();
+            ctx.translate(pX + pW / 2, pY + pH / 2);
+            ctx.scale(photoPunch, photoPunch);
+            ctx.rotate(-0.02);
+            ctx.translate(-pW / 2, -pH / 2);
+
+            drawFastShadow(ctx, 0, 0, pW, pH);
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.roundRect(0, 0, pW, pH, 18);
+            ctx.fill();
+            ctx.strokeStyle = '#E3E0D8';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Zero distortion cover image
+            drawCoverImage(ctx, calebPhoto, 20, 20, pW - 40, pH - 94, 12);
+
+            ctx.font = '800 22px AntonLocal, Anton, sans-serif';
+            ctx.fillStyle = '#111111';
+            ctx.fillText('CALEB LICHTEIG', 26, pH - 40);
+
+            ctx.font = '700 13px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#0052FF';
+            ctx.fillText('// BUILDWITHCALEB.COM', 26, pH - 18);
+
+            ctx.restore();
+          }
+        }
+
+        ctx.restore();
+      }
+
+      ctx.restore(); // Restore camera
+
+      // 3. Draw Clean Minimal Top Bar (ONLY Name, NO frame numbers!)
+      drawMinimalTopBar(ctx);
+    };
+
+    // ========================================================
+    // PLAYBACK CONTROLS
+    // ========================================================
+    let currentTime = 0;
+    let isPlaying = false;
+    let lastAnimTime = null;
+
+    function formatTime(s) {
+      const sec = Math.floor(s);
+      const ms = Math.floor((s - sec) * 100);
+      return `00:${String(sec).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+    }
+
+    function renderLoop(now) {
+      if (lastAnimTime === null) lastAnimTime = now;
+      const dt = (now - lastAnimTime) / 1000;
+      lastAnimTime = now;
+
+      if (isPlaying) {
+        currentTime += dt;
+        if (currentTime > TOTAL_DURATION) {
+          currentTime = 0;
+        }
+        slider.value = currentTime;
+      }
+
+      window.__renderFrameAt(currentTime);
+      timeLabel.textContent = formatTime(currentTime);
+
+      requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    slider.addEventListener('input', (e) => {
+      currentTime = parseFloat(e.target.value);
+      window.__renderFrameAt(currentTime);
+      timeLabel.textContent = formatTime(currentTime);
+    });
+
+    btnPlay.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+    });
+
+    document.querySelectorAll('.jump-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        currentTime = parseFloat(e.target.dataset.time);
+        slider.value = currentTime;
+        window.__renderFrameAt(currentTime);
+        timeLabel.textContent = formatTime(currentTime);
+      });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        isPlaying = !isPlaying;
+      } else if (e.key >= '1' && e.key <= '6') {
+        const jumpTimes = [0.0, 4.5, 9.5, 14.5, 19.5, 24.5];
+        const idx = parseInt(e.key) - 1;
+        if (idx < jumpTimes.length) {
+          currentTime = jumpTimes[idx];
+          slider.value = currentTime;
+          window.__renderFrameAt(currentTime);
+          timeLabel.textContent = formatTime(currentTime);
+        }
+      }
+    });
+  </script>
+</body>
+</html>

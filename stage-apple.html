@@ -1,0 +1,1621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Apple Intelligence — Launch Video (30s Kinetic Stage)</title>
+  <style>
+    @font-face {
+      font-family: 'InterLocal';
+      src: url('../public/fonts/InterVariable.woff2') format('woff2');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #EBEAE5;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "InterLocal", "Helvetica Neue", sans-serif;
+      color: #1D1D1F;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #stage-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      box-shadow: 0 40px 120px rgba(0, 0, 0, 0.22);
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid #D2D2D7;
+      background: #F5F5F7;
+    }
+
+    canvas#motion-stage {
+      display: block;
+      width: 1920px;
+      height: 1080px;
+      background: #F5F5F7;
+    }
+
+    /* Floating Scrub Bar */
+    #playback-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      border-radius: 9999px;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      z-index: 1000;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      font-size: 13px;
+    }
+
+    button.ctrl-btn {
+      background: #0071E3;
+      color: #FFFFFF;
+      border: none;
+      padding: 7px 18px;
+      border-radius: 9999px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 12px;
+      letter-spacing: 0.3px;
+      transition: transform 0.1s, background-color 0.1s;
+    }
+    button.ctrl-btn:hover { background: #0077ED; }
+    button.ctrl-btn:active { transform: scale(0.96); }
+
+    .jump-btn {
+      background: #F5F5F7;
+      color: #1D1D1F;
+      border: 1px solid #D2D2D7;
+      padding: 5px 11px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+    .jump-btn:hover { background: #E8E8ED; border-color: #0071E3; color: #0071E3; }
+
+    input[type=range] {
+      width: 260px;
+      accent-color: #0071E3;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <canvas id="motion-stage" width="1920" height="1080"></canvas>
+  </div>
+
+  <div id="playback-bar">
+    <button class="ctrl-btn" id="btn-play-toggle">PLAY / PAUSE</button>
+    <input type="range" id="time-slider" min="0" max="30.0" step="0.0333" value="0">
+    <span id="time-label" style="font-weight: 700; min-width: 90px; font-variant-numeric: tabular-nums;">00:00.00</span>
+    <div style="display: flex; gap: 6px;">
+      <button class="jump-btn" data-time="0.0">1. HOOK</button>
+      <button class="jump-btn" data-time="5.0">2. SIRI RIM</button>
+      <button class="jump-btn" data-time="10.0">3. WRITING TOOLS</button>
+      <button class="jump-btn" data-time="15.0">4. PRIVATE CLOUD</button>
+      <button class="jump-btn" data-time="20.0">5. M4 ENGINE</button>
+      <button class="jump-btn" data-time="25.0">6. LOCKUP</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('motion-stage');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const container = document.getElementById('stage-container');
+    const slider = document.getElementById('time-slider');
+    const timeLabel = document.getElementById('time-label');
+    const btnPlay = document.getElementById('btn-play-toggle');
+    const jumpBtns = document.querySelectorAll('.jump-btn');
+
+    const W = 1920;
+    const H = 1080;
+    const TOTAL_DURATION = 30.0;
+
+    // Responsive Canvas Scaling
+    function resizeStage() {
+      const availW = window.innerWidth - 60;
+      const availH = window.innerHeight - 120;
+      const scale = Math.min(availW / W, availH / H, 1.0);
+      container.style.transform = `scale(${scale})`;
+    }
+    window.addEventListener('resize', resizeStage);
+    resizeStage();
+
+    // ========================================================
+    // MATHEMATICAL EASINGS & RUNGE-KUTTA KINETICS
+    // ========================================================
+    const clamp = (v, min = 0, max = 1) => Math.max(min, Math.min(max, v));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    // Fast spring punch: snappy overshoot without sluggishness
+    function springPunch(t, start, dur = 0.22, s = 1.35) {
+      if (t <= start) return 0;
+      const p = Math.min(1, (t - start) / dur);
+      const p1 = p - 1;
+      return p1 * p1 * ((s + 1) * p1 + s) + 1;
+    }
+
+    function easeOutExpo(x) {
+      return x === 1 ? 1 : 1 - Math.pow(2, -10 * clamp(x));
+    }
+
+    function easeInOutCubic(x) {
+      const c = clamp(x);
+      return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+    }
+
+    // Helper: Rounded Rectangle
+    function roundRect(targetCtx, x, y, w, h, r) {
+      const rad = Math.min(r, w / 2, h / 2);
+      targetCtx.beginPath();
+      targetCtx.moveTo(x + rad, y);
+      targetCtx.arcTo(x + w, y, x + w, y + h, rad);
+      targetCtx.arcTo(x + w, y + h, x, y + h, rad);
+      targetCtx.arcTo(x, y + h, x, y, rad);
+      targetCtx.arcTo(x, y, x + w, y, rad);
+      targetCtx.closePath();
+    }
+
+    // ========================================================
+    // 9-SLICE DROP SHADOW PRE-BAKER (CUPERTINO SOFT AMBIENT AO)
+    // ========================================================
+    class CupertinoShadowBaker {
+      constructor(radius = 32, maxBlur = 64, maxOffsetY = 32) {
+        this.radius = radius;
+        this.padding = maxBlur * 1.5 + maxOffsetY;
+        this.coreSize = radius * 2 + 48;
+        this.stampSize = this.coreSize + this.padding * 2;
+
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = this.stampSize;
+        this.canvas.height = this.stampSize;
+        this.ctx = this.canvas.getContext('2d');
+        this.bake();
+      }
+
+      bake() {
+        const c = this.ctx;
+        const p = this.padding;
+        const s = this.coreSize;
+        const r = this.radius;
+
+        // Apple signature triple-tier diffuse ambient occlusion
+        const tiers = [
+          { offsetY: 4,  blur: 12, color: 'rgba(0, 0, 0, 0.08)' }, // Contact AO
+          { offsetY: 20, blur: 36, color: 'rgba(0, 0, 0, 0.06)' }, // Soft key light
+          { offsetY: 44, blur: 72, color: 'rgba(0, 0, 0, 0.04)' }  // Penumbra
+        ];
+
+        tiers.forEach(tier => {
+          c.save();
+          c.shadowColor = tier.color;
+          c.shadowBlur = tier.blur;
+          c.shadowOffsetX = 0;
+          c.shadowOffsetY = tier.offsetY;
+          c.fillStyle = '#000000';
+          roundRect(c, p, p, s, s, r);
+          c.fill();
+          c.restore();
+        });
+
+        // Cut out interior to leave drop shadow only
+        c.save();
+        c.globalCompositeOperation = 'destination-out';
+        roundRect(c, p, p, s, s, r);
+        c.fill();
+        c.restore();
+      }
+
+      drawShadow(targetCtx, x, y, width, height, alpha = 1.0) {
+        if (alpha <= 0.001) return;
+        targetCtx.save();
+        targetCtx.globalAlpha *= alpha;
+
+        const p = this.padding;
+        const s = this.coreSize;
+        const r = this.radius;
+        const corner = p + r;
+
+        const sx0 = 0, sx1 = p + r, sx2 = this.stampSize - (p + r);
+        const sw0 = corner, sw1 = s - 2 * r, sw2 = corner;
+        const sy0 = 0, sy1 = p + r, sy2 = this.stampSize - (p + r);
+        const sh0 = corner, sh1 = s - 2 * r, sh2 = corner;
+
+        const dx0 = x - p, dx1 = x + r, dx2 = x + width - r;
+        const dw0 = corner, dw1 = Math.max(0, width - 2 * r), dw2 = corner;
+        const dy0 = y - p, dy1 = y + r, dy2 = y + height - r;
+        const dh0 = corner, dh1 = Math.max(0, height - 2 * r), dh2 = corner;
+
+        // 4 corners
+        targetCtx.drawImage(this.canvas, sx0, sy0, sw0, sh0, dx0, dy0, dw0, dh0);
+        targetCtx.drawImage(this.canvas, sx2, sy0, sw2, sh0, dx2, dy0, dw2, dh0);
+        targetCtx.drawImage(this.canvas, sx0, sy2, sw0, sh2, dx0, dy2, dw0, dh2);
+        targetCtx.drawImage(this.canvas, sx2, sy2, sw2, sh2, dx2, dy2, dw2, dh2);
+
+        // 4 edges
+        if (dw1 > 0) {
+          targetCtx.drawImage(this.canvas, sx1, sy0, sw1, sh0, dx1, dy0, dw1, dh0);
+          targetCtx.drawImage(this.canvas, sx1, sy2, sw1, sh2, dx1, dy2, dw1, dh2);
+        }
+        if (dh1 > 0) {
+          targetCtx.drawImage(this.canvas, sx0, sy1, sw0, sh1, dx0, dy1, dw0, dh1);
+          targetCtx.drawImage(this.canvas, sx2, sy1, sw2, sh1, dx2, dy1, dw2, dh1);
+        }
+
+        targetCtx.restore();
+      }
+    }
+
+    const shadowBaker = new CupertinoShadowBaker(32);
+
+    // ========================================================
+    // CUPERTINO STUDIO BACKGROUND & ALABASTER ENVIRONMENT
+    // ========================================================
+    function drawCupertinoEnvironment(targetCtx, t) {
+      // 1. Pristine Cupertino Alabaster (#F5F5F7) with soft top-center studio illumination
+      const bgGrad = targetCtx.createRadialGradient(W / 2, 280, 80, W / 2, 450, 1100);
+      bgGrad.addColorStop(0, '#FFFFFF');
+      bgGrad.addColorStop(0.55, '#F5F5F7');
+      bgGrad.addColorStop(1, '#ECECEE');
+      targetCtx.fillStyle = bgGrad;
+      targetCtx.fillRect(0, 0, W, H);
+
+      // 2. Subtle architectural micro-dots (Apple design grid)
+      targetCtx.save();
+      targetCtx.fillStyle = 'rgba(0, 0, 0, 0.022)';
+      const step = 80;
+      for (let x = 40; x < W; x += step) {
+        for (let y = 40; y < H; y += step) {
+          targetCtx.beginPath();
+          targetCtx.arc(x, y, 1.2, 0, Math.PI * 2);
+          targetCtx.fill();
+        }
+      }
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // CLEAN TOP BAR: "APPLE // INTELLIGENCE" (NO FRAME COUNTERS)
+    // ========================================================
+    function drawCleanTopBar(targetCtx, t) {
+      targetCtx.save();
+
+      // Left Brand Tag: Vector Apple Glyph + "APPLE // INTELLIGENCE"
+      targetCtx.textAlign = 'left';
+      targetCtx.textBaseline = 'middle';
+
+      // Apple Glyph
+      const ax = 80;
+      const ay = 64;
+      targetCtx.save();
+      targetCtx.fillStyle = '#1D1D1F';
+      targetCtx.beginPath();
+      // Minimalist silhouette of Apple logo
+      targetCtx.arc(ax - 3, ay + 2, 7, 0, Math.PI * 2);
+      targetCtx.arc(ax + 3, ay + 2, 7, 0, Math.PI * 2);
+      targetCtx.fill();
+      // Apple leaf
+      targetCtx.beginPath();
+      targetCtx.ellipse(ax + 1, ay - 8, 3.5, 2, Math.PI / 4, 0, Math.PI * 2);
+      targetCtx.fill();
+      targetCtx.restore();
+
+      targetCtx.font = '700 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+      targetCtx.fillStyle = '#1D1D1F';
+      targetCtx.letterSpacing = '1.2px';
+      targetCtx.fillText('APPLE', ax + 20, ay);
+
+      targetCtx.fillStyle = '#86868B';
+      targetCtx.font = '500 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+      targetCtx.fillText('//  INTELLIGENCE', ax + 78, ay);
+
+      // Right Side: Clean Cupertino Meta Badge
+      targetCtx.textAlign = 'right';
+      targetCtx.font = '600 12px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+      targetCtx.fillStyle = '#86868B';
+      targetCtx.fillText('M4 SILICON  •  PRIVATE CLOUD COMPUTE  •  ON-DEVICE PRIVACY', W - 80, ay);
+
+      // Subtle hairline separator below top bar
+      targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+      targetCtx.lineWidth = 1;
+      targetCtx.beginPath();
+      targetCtx.moveTo(80, 96.5);
+      targetCtx.lineTo(W - 80, 96.5);
+      targetCtx.stroke();
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // THE ICONIC SIRI GLOWING PERIMETER RIM
+    // Multi-chromatic rainbow harmonic wave pulsing around the canvas
+    // ========================================================
+    function drawSiriGlowingPerimeterRim(targetCtx, t, intensity = 1.0) {
+      if (intensity <= 0.001) return;
+
+      targetCtx.save();
+      targetCtx.globalAlpha = clamp(intensity);
+
+      const margin = 20;
+      const x = margin;
+      const y = margin;
+      const w = W - margin * 2;
+      const h = H - margin * 2;
+      const r = 36;
+
+      // 1. Broad soft ambient glow radiating inwards into display
+      const glowPasses = [
+        { width: 48, alpha: 0.18 * intensity },
+        { width: 28, alpha: 0.35 * intensity },
+        { width: 14, alpha: 0.70 * intensity },
+        { width: 6,  alpha: 0.95 * intensity }
+      ];
+
+      // Siri Rainbow Colors: Apple Blue (#2997FF), Pink (#FF2D55), Amber (#FF9500), Violet (#AF52DE), Cyan (#30B0C7)
+      const colors = ['#2997FF', '#AF52DE', '#FF2D55', '#FF9500', '#30B0C7', '#2997FF'];
+
+      // Build rotating multi-stop linear gradients along all 4 edges
+      // Top Edge Gradient
+      const topGrad = targetCtx.createLinearGradient(x, y, x + w, y);
+      const phase = (t * 0.35) % 1;
+      for (let i = 0; i <= 5; i++) {
+        let stop = (i / 5 + phase) % 1;
+        topGrad.addColorStop(stop, colors[i]);
+      }
+
+      // Render glowing rim strokes
+      glowPasses.forEach(pass => {
+        targetCtx.save();
+        targetCtx.lineWidth = pass.width;
+        targetCtx.strokeStyle = topGrad;
+        targetCtx.globalAlpha = pass.alpha;
+        targetCtx.lineCap = 'round';
+        targetCtx.lineJoin = 'round';
+        roundRect(targetCtx, x + pass.width / 2, y + pass.width / 2, w - pass.width, h - pass.width, Math.max(8, r - pass.width / 2));
+        targetCtx.stroke();
+        targetCtx.restore();
+      });
+
+      // Harmonic perimeter pulse nodes (Siri wave ripples at corners & edges)
+      const pulseCount = 8;
+      for (let i = 0; i < pulseCount; i++) {
+        const theta = (t * 2.5 + (i * Math.PI * 2 / pulseCount)) % (Math.PI * 2);
+        const waveAmp = 0.5 + 0.5 * Math.sin(theta * 3);
+        const nodeColor = colors[i % (colors.length - 1)];
+
+        // Compute coordinate along perimeter
+        const pNorm = (theta / (Math.PI * 2));
+        let px, py;
+        if (pNorm < 0.25) {
+          px = x + (pNorm / 0.25) * w; py = y;
+        } else if (pNorm < 0.5) {
+          px = x + w; py = y + ((pNorm - 0.25) / 0.25) * h;
+        } else if (pNorm < 0.75) {
+          px = x + w - ((pNorm - 0.5) / 0.25) * w; py = y + h;
+        } else {
+          px = x; py = y + h - ((pNorm - 0.75) / 0.25) * h;
+        }
+
+        const nodeGrad = targetCtx.createRadialGradient(px, py, 2, px, py, 40 * waveAmp);
+        nodeGrad.addColorStop(0, nodeColor);
+        nodeGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+        targetCtx.save();
+        targetCtx.fillStyle = nodeGrad;
+        targetCtx.globalAlpha = 0.45 * intensity * waveAmp;
+        targetCtx.beginPath();
+        targetCtx.arc(px, py, 45 * waveAmp, 0, Math.PI * 2);
+        targetCtx.fill();
+        targetCtx.restore();
+      }
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // ACT 1: THE PROCLAMATION (0.00s - 5.00s)
+    // "APPLE INTELLIGENCE." -> "AI FOR THE REST OF US."
+    // ========================================================
+    function drawAct1(targetCtx, t) {
+      if (t < 0 || t >= 5.2) return;
+      const actAlpha = t < 4.7 ? 1.0 : clamp(1.0 - (t - 4.7) / 0.4);
+
+      targetCtx.save();
+      targetCtx.globalAlpha = actAlpha;
+
+      // Subtle ambient siri rim breathing in Act 1
+      const rimBreath = clamp(t / 1.5) * 0.35;
+      drawSiriGlowingPerimeterRim(targetCtx, t, rimBreath);
+
+      // 1. Pill Category Badge
+      const badgeSpring = springPunch(t, 0.2, 0.3);
+      if (badgeSpring > 0.01) {
+        targetCtx.save();
+        const bx = W / 2;
+        const by = 250 - (1 - badgeSpring) * 20;
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+
+        // Glass Pill Container
+        const bw = 380;
+        const bh = 38;
+        targetCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+        targetCtx.lineWidth = 1;
+        roundRect(targetCtx, bx - bw / 2, by - bh / 2, bw, bh, 19);
+        targetCtx.fill();
+        targetCtx.stroke();
+
+        // Siri Mini Gradient Dot
+        const dotGrad = targetCtx.createLinearGradient(bx - 145, by, bx - 135, by);
+        dotGrad.addColorStop(0, '#2997FF');
+        dotGrad.addColorStop(0.5, '#FF2D55');
+        dotGrad.addColorStop(1, '#FF9500');
+        targetCtx.fillStyle = dotGrad;
+        targetCtx.beginPath();
+        targetCtx.arc(bx - 145, by, 5, 0, Math.PI * 2);
+        targetCtx.fill();
+
+        targetCtx.font = '600 12px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.letterSpacing = '0.8px';
+        targetCtx.fillText('THE NEXT ERA OF PERSONAL INTELLIGENCE', bx + 6, by);
+        targetCtx.restore();
+      }
+
+      // 2. Line 1: "APPLE" (0.8s) "INTELLIGENCE." (1.4s)
+      const pApple = springPunch(t, 0.8, 0.28);
+      const pIntel = springPunch(t, 1.4, 0.28);
+
+      const titleY = 440;
+      targetCtx.textAlign = 'center';
+      targetCtx.textBaseline = 'middle';
+      targetCtx.font = '800 116px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+      targetCtx.letterSpacing = '-0.04em';
+
+      // Measure words for exact side-by-side spacing with zero overlap
+      const appleWidth = targetCtx.measureText('APPLE').width;
+      const spaceWidth = 28;
+      const intelWidth = targetCtx.measureText('INTELLIGENCE.').width;
+      const totalWidth = appleWidth + spaceWidth + intelWidth;
+      const startX = (W - totalWidth) / 2;
+
+      // Word 1: APPLE
+      if (pApple > 0.01) {
+        targetCtx.save();
+        const ax = startX + appleWidth / 2;
+        targetCtx.translate(ax, titleY);
+        targetCtx.scale(pApple, pApple);
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.fillText('APPLE', 0, 0);
+        targetCtx.restore();
+      }
+
+      // Word 2: INTELLIGENCE.
+      if (pIntel > 0.01) {
+        targetCtx.save();
+        const ix = startX + appleWidth + spaceWidth + intelWidth / 2;
+        targetCtx.translate(ix, titleY);
+        targetCtx.scale(pIntel, pIntel);
+
+        // Apple Intelligence Gradient fill
+        const grad = targetCtx.createLinearGradient(-intelWidth / 2, 0, intelWidth / 2, 0);
+        grad.addColorStop(0, '#1D1D1F');
+        grad.addColorStop(0.5, '#0071E3');
+        grad.addColorStop(1, '#AF52DE');
+        targetCtx.fillStyle = grad;
+        targetCtx.fillText('INTELLIGENCE.', 0, 0);
+        targetCtx.restore();
+      }
+
+      // 3. Line 2: "AI FOR THE REST OF US." (2.6s - 4.6s)
+      // Generous stacked spacing (titleY + 160px = 600px), zero text overlap!
+      const line2Y = 600;
+      targetCtx.font = '700 78px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+      targetCtx.letterSpacing = '-0.03em';
+
+      const wordsLine2 = [
+        { text: 'AI', startTime: 2.6 },
+        { text: 'FOR', startTime: 3.0 },
+        { text: 'THE', startTime: 3.35 },
+        { text: 'REST', startTime: 3.7 },
+        { text: 'OF US.', startTime: 4.15 }
+      ];
+
+      // Measure Line 2 widths
+      let l2TotalW = 0;
+      const gapL2 = 24;
+      wordsLine2.forEach((wObj, idx) => {
+        wObj.width = targetCtx.measureText(wObj.text).width;
+        l2TotalW += wObj.width + (idx < wordsLine2.length - 1 ? gapL2 : 0);
+      });
+
+      let curX = (W - l2TotalW) / 2;
+      wordsLine2.forEach(wObj => {
+        const pWord = springPunch(t, wObj.startTime, 0.24);
+        if (pWord > 0.01) {
+          targetCtx.save();
+          const wordCenterX = curX + wObj.width / 2;
+          targetCtx.translate(wordCenterX, line2Y);
+          targetCtx.scale(pWord, pWord);
+          targetCtx.fillStyle = (wObj.text === 'OF US.' || wObj.text === 'AI') ? '#0071E3' : '#1D1D1F';
+          targetCtx.fillText(wObj.text, 0, 0);
+          targetCtx.restore();
+        }
+        curX += wObj.width + gapL2;
+      });
+
+      // 4. Subtitle metadata (3.8s)
+      const pSub = springPunch(t, 3.8, 0.35);
+      if (pSub > 0.01) {
+        targetCtx.save();
+        targetCtx.translate(W / 2, 720);
+        targetCtx.scale(pSub, pSub);
+        targetCtx.font = '500 24px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+        targetCtx.fillStyle = '#86868B';
+        targetCtx.letterSpacing = '0.5px';
+        targetCtx.fillText('Deeply intuitive. Fully on-device. Grounded in your personal context.', 0, 0);
+        targetCtx.restore();
+      }
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // ACT 2: THE SIRI GLOWING PERIMETER RIM (5.00s - 10.00s)
+    // Pulsing rainbow harmonic boundary wave & iridescent Siri core
+    // ========================================================
+    function drawAct2(targetCtx, t) {
+      if (t < 4.8 || t >= 10.2) return;
+      const inAlpha = clamp((t - 4.8) / 0.4);
+      const outAlpha = t < 9.7 ? 1.0 : clamp(1.0 - (t - 9.7) / 0.4);
+      const actAlpha = inAlpha * outAlpha;
+
+      targetCtx.save();
+      targetCtx.globalAlpha = actAlpha;
+
+      // Peak intensity of the iconic glowing boundary wave!
+      const pulseWave = 0.85 + 0.15 * Math.sin(t * Math.PI * 3);
+      drawSiriGlowingPerimeterRim(targetCtx, t, 1.0 * pulseWave);
+
+      // Center Siri Iridescent Harmonic Wave Ring Sphere
+      const cx = W / 2;
+      const cy = 460;
+      const pSphere = springPunch(t, 5.0, 0.45);
+
+      if (pSphere > 0.01) {
+        targetCtx.save();
+        targetCtx.translate(cx, cy);
+        targetCtx.scale(pSphere, pSphere);
+
+        // Multi-layered Siri harmonic orbital ribbons
+        const ringColors = ['#2997FF', '#AF52DE', '#FF2D55', '#FF9500', '#30B0C7'];
+        for (let rIdx = 0; rIdx < 5; rIdx++) {
+          const radius = 90 + rIdx * 28 + Math.sin(t * 4 + rIdx) * 12;
+          const rot = t * (0.8 + rIdx * 0.25) * (rIdx % 2 === 0 ? 1 : -1);
+
+          targetCtx.save();
+          targetCtx.rotate(rot);
+          targetCtx.beginPath();
+          // Perturbed harmonic ribbon
+          const points = 60;
+          for (let p = 0; p <= points; p++) {
+            const angle = (p / points) * Math.PI * 2;
+            const wave = Math.sin(angle * 4 + t * 5 + rIdx) * 14;
+            const rx = (radius + wave) * Math.cos(angle);
+            const ry = (radius + wave) * Math.sin(angle) * 0.85;
+            if (p === 0) targetCtx.moveTo(rx, ry);
+            else targetCtx.lineTo(rx, ry);
+          }
+          targetCtx.closePath();
+          targetCtx.strokeStyle = ringColors[rIdx];
+          targetCtx.lineWidth = 4.5;
+          targetCtx.globalAlpha = 0.65;
+          targetCtx.stroke();
+          targetCtx.restore();
+        }
+
+        // Center radiant core
+        const coreGrad = targetCtx.createRadialGradient(0, 0, 0, 0, 0, 110);
+        coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+        coreGrad.addColorStop(0.35, 'rgba(41, 151, 255, 0.55)');
+        coreGrad.addColorStop(0.7, 'rgba(255, 45, 85, 0.35)');
+        coreGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        targetCtx.fillStyle = coreGrad;
+        targetCtx.beginPath();
+        targetCtx.arc(0, 0, 110, 0, Math.PI * 2);
+        targetCtx.fill();
+
+        targetCtx.restore();
+      }
+
+      // Kinetic Typography Stack (Generous vertical placement, zero overlap)
+      const pSiriWord = springPunch(t, 5.4, 0.3);
+      if (pSiriWord > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 700);
+        targetCtx.scale(pSiriWord, pSiriWord);
+        targetCtx.font = '800 88px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.035em';
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.fillText('SIRI. ALL NEW.', 0, 0);
+        targetCtx.restore();
+      }
+
+      const pSiriSub = springPunch(t, 6.2, 0.32);
+      if (pSiriSub > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 790);
+        targetCtx.scale(pSiriSub, pSiriSub);
+        targetCtx.font = '700 42px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.02em';
+
+        const textGrad = targetCtx.createLinearGradient(-350, 0, 350, 0);
+        textGrad.addColorStop(0, '#2997FF');
+        textGrad.addColorStop(0.5, '#AF52DE');
+        textGrad.addColorStop(1, '#FF2D55');
+        targetCtx.fillStyle = textGrad;
+        targetCtx.fillText('AN ORGANIC GLOWING AURA AROUND EVERY EDGE', 0, 0);
+        targetCtx.restore();
+      }
+
+      const pSiriCap = springPunch(t, 7.2, 0.35);
+      if (pSiriCap > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.font = '500 22px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+        targetCtx.fillStyle = '#86868B';
+        targetCtx.letterSpacing = '0.4px';
+        targetCtx.fillText('Understands natural pauses • Cross-app actions • On-screen awareness', W / 2, 855);
+        targetCtx.restore();
+      }
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // ACT 3: FLOATING FROSTED GLASS UI SUITE (10.00s - 15.00s)
+    // Writing Tools, Image Wand, and Clean Up
+    // ========================================================
+    function drawAct3(targetCtx, t) {
+      if (t < 9.8 || t >= 15.2) return;
+      const inAlpha = clamp((t - 9.8) / 0.4);
+      const outAlpha = t < 14.7 ? 1.0 : clamp(1.0 - (t - 14.7) / 0.4);
+      const actAlpha = inAlpha * outAlpha;
+
+      targetCtx.save();
+      targetCtx.globalAlpha = actAlpha;
+
+      // Soft ambient Siri rim presence
+      drawSiriGlowingPerimeterRim(targetCtx, t, 0.4);
+
+      // Section Eyebrow Title
+      targetCtx.textAlign = 'center';
+      targetCtx.textBaseline = 'middle';
+      targetCtx.font = '700 36px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+      targetCtx.fillStyle = '#1D1D1F';
+      targetCtx.letterSpacing = '-0.02em';
+      targetCtx.fillText('SYSTEM-WIDE CAPABILITIES', W / 2, 175);
+
+      // Floating Frosted Glass UI Card (1200px x 620px)
+      const cardW = 1240;
+      const cardH = 630;
+      const cardX = (W - cardW) / 2;
+      const cardY = 225;
+      const pCard = springPunch(t, 10.0, 0.38);
+
+      if (pCard > 0.01) {
+        targetCtx.save();
+        // Subtle 3D tilt float
+        const tiltX = Math.sin(t * 1.5) * 4;
+        const tiltY = Math.cos(t * 1.2) * 6;
+        targetCtx.translate(W / 2 + tiltX, H / 2 + 50 + tiltY);
+        targetCtx.scale(pCard, pCard);
+        targetCtx.translate(-W / 2, -(H / 2 + 50));
+
+        // 1. Pre-baked 9-slice soft drop shadow
+        shadowBaker.drawShadow(targetCtx, cardX, cardY, cardW, cardH, 0.95);
+
+        // 2. Frosted Glass Body
+        targetCtx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+        roundRect(targetCtx, cardX, cardY, cardW, cardH, 28);
+        targetCtx.fill();
+
+        // 3. Crisp Glass Perimeter Highlight (1.5px white hairline)
+        targetCtx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+        targetCtx.lineWidth = 1.5;
+        roundRect(targetCtx, cardX, cardY, cardW, cardH, 28);
+        targetCtx.stroke();
+
+        // 4. Card Header: macOS Traffic Lights + Cupertino Segmented Bar
+        const topH = 64;
+        targetCtx.fillStyle = 'rgba(245, 245, 247, 0.7)';
+        targetCtx.beginPath();
+        roundRect(targetCtx, cardX, cardY, cardW, topH, 28);
+        targetCtx.fill();
+        targetCtx.fillRect(cardX, cardY + 28, cardW, topH - 28);
+
+        // Traffic Light Dots
+        const dotY = cardY + 32;
+        const dotColors = ['#FF5F56', '#FFBD2E', '#27C93F'];
+        dotColors.forEach((color, i) => {
+          targetCtx.beginPath();
+          targetCtx.arc(cardX + 36 + i * 22, dotY, 6, 0, Math.PI * 2);
+          targetCtx.fillStyle = color;
+          targetCtx.fill();
+        });
+
+        // Segmented Control Pill Bar in Card Header
+        const segW = 540;
+        const segH = 34;
+        const segX = cardX + (cardW - segW) / 2;
+        const segY = cardY + 15;
+        targetCtx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+        roundRect(targetCtx, segX, segY, segW, segH, 17);
+        targetCtx.fill();
+
+        // Segment Tabs: Proofread, Rewrite, Friendly, Summarize
+        const tabs = ['Proofread', 'Rewrite', 'Friendly', 'Summarize'];
+        const tabW = segW / tabs.length;
+        const activeTabIdx = Math.min(3, Math.floor((t - 10.0) / 1.1) % 4);
+
+        // Active tab pill
+        targetCtx.fillStyle = '#FFFFFF';
+        targetCtx.shadowColor = 'rgba(0, 0, 0, 0.08)';
+        targetCtx.shadowBlur = 8;
+        targetCtx.shadowOffsetY = 2;
+        roundRect(targetCtx, segX + activeTabIdx * tabW + 2, segY + 2, tabW - 4, segH - 4, 15);
+        targetCtx.fill();
+        targetCtx.shadowColor = 'transparent';
+
+        tabs.forEach((tab, i) => {
+          targetCtx.font = i === activeTabIdx ? '600 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif' : '500 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+          targetCtx.fillStyle = i === activeTabIdx ? '#1D1D1F' : '#86868B';
+          targetCtx.textAlign = 'center';
+          targetCtx.textBaseline = 'middle';
+          targetCtx.fillText(tab, segX + i * tabW + tabW / 2, segY + segH / 2);
+        });
+
+        // 5. Three Distinct Cupertino Feature Columns
+        const colW = 356;
+        const colH = 490;
+        const colGap = 24;
+        const colStartX = cardX + 38;
+        const colY = cardY + 95;
+
+        // --- Column 1: WRITING TOOLS (11.0s) ---
+        const pCol1 = springPunch(t, 11.0, 0.32);
+        if (pCol1 > 0.01) {
+          targetCtx.save();
+          targetCtx.translate(colStartX + colW / 2, colY + colH / 2);
+          targetCtx.scale(pCol1, pCol1);
+          targetCtx.translate(-(colStartX + colW / 2), -(colY + colH / 2));
+
+          targetCtx.fillStyle = '#FFFFFF';
+          roundRect(targetCtx, colStartX, colY, colW, colH, 20);
+          targetCtx.fill();
+          targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+          targetCtx.lineWidth = 1;
+          targetCtx.stroke();
+
+          // Icon / Badge
+          targetCtx.fillStyle = 'rgba(0, 113, 227, 0.1)';
+          roundRect(targetCtx, colStartX + 24, colY + 24, 48, 48, 14);
+          targetCtx.fill();
+          targetCtx.font = '700 22px -apple-system, sans-serif';
+          targetCtx.fillStyle = '#0071E3';
+          targetCtx.textAlign = 'center';
+          targetCtx.textBaseline = 'middle';
+          targetCtx.fillText('✍️', colStartX + 48, colY + 48);
+
+          // Title & Description
+          targetCtx.textAlign = 'left';
+          targetCtx.font = '700 24px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.fillText('Writing Tools', colStartX + 24, colY + 104);
+
+          targetCtx.font = '500 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+          targetCtx.fillStyle = '#86868B';
+          targetCtx.fillText('Rewrite, proofread, and summarize', colStartX + 24, colY + 132);
+          targetCtx.fillText('text across Mail, Notes, and Pages.', colStartX + 24, colY + 154);
+
+          // Simulated Text Selection with Siri Aura Highlight
+          const boxX = colStartX + 20;
+          const boxY = colY + 185;
+          const boxW = colW - 40;
+          const boxH = 265;
+          targetCtx.fillStyle = '#F5F5F7';
+          roundRect(targetCtx, boxX, boxY, boxW, boxH, 14);
+          targetCtx.fill();
+
+          targetCtx.font = '500 13px -apple-system, monospace';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.fillText('"The quarterly launch exceeded', boxX + 16, boxY + 36);
+
+          // Highlighted selection line with rainbow Siri border
+          targetCtx.fillStyle = 'rgba(41, 151, 255, 0.14)';
+          roundRect(targetCtx, boxX + 12, boxY + 54, boxW - 24, 28, 6);
+          targetCtx.fill();
+          targetCtx.strokeStyle = '#2997FF';
+          targetCtx.lineWidth = 1.5;
+          targetCtx.stroke();
+
+          targetCtx.fillStyle = '#0071E3';
+          targetCtx.font = '600 13px -apple-system, monospace';
+          targetCtx.fillText('all projected performance goals"', boxX + 16, boxY + 72);
+
+          targetCtx.fillStyle = '#86868B';
+          targetCtx.font = '500 12px -apple-system, sans-serif';
+          targetCtx.fillText('✨ Rewrite: More Professional', boxX + 16, boxY + 120);
+
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.font = '600 13px -apple-system, sans-serif';
+          targetCtx.fillText('"Our release set new records', boxX + 16, boxY + 150);
+          targetCtx.fillText('across every benchmark."', boxX + 16, boxY + 172);
+
+          targetCtx.restore();
+        }
+
+        // --- Column 2: IMAGE WAND (12.2s) ---
+        const col2X = colStartX + colW + colGap;
+        const pCol2 = springPunch(t, 12.2, 0.32);
+        if (pCol2 > 0.01) {
+          targetCtx.save();
+          targetCtx.translate(col2X + colW / 2, colY + colH / 2);
+          targetCtx.scale(pCol2, pCol2);
+          targetCtx.translate(-(col2X + colW / 2), -(colY + colH / 2));
+
+          targetCtx.fillStyle = '#FFFFFF';
+          roundRect(targetCtx, col2X, colY, colW, colH, 20);
+          targetCtx.fill();
+          targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+          targetCtx.lineWidth = 1;
+          targetCtx.stroke();
+
+          // Icon / Badge
+          targetCtx.fillStyle = 'rgba(175, 82, 222, 0.1)';
+          roundRect(targetCtx, col2X + 24, colY + 24, 48, 48, 14);
+          targetCtx.fill();
+          targetCtx.font = '700 22px -apple-system, sans-serif';
+          targetCtx.fillStyle = '#AF52DE';
+          targetCtx.textAlign = 'center';
+          targetCtx.textBaseline = 'middle';
+          targetCtx.fillText('🪄', col2X + 48, colY + 48);
+
+          targetCtx.textAlign = 'left';
+          targetCtx.font = '700 24px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.fillText('Image Wand', col2X + 24, colY + 104);
+
+          targetCtx.font = '500 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+          targetCtx.fillStyle = '#86868B';
+          targetCtx.fillText('Transform rough sketches into', col2X + 24, colY + 132);
+          targetCtx.fillText('vibrant, contextual illustrations.', col2X + 24, colY + 154);
+
+          // Simulated Image Wand Canvas
+          const boxX2 = col2X + 20;
+          const boxY2 = colY + 185;
+          const boxW2 = colW - 40;
+          const boxH2 = 265;
+          targetCtx.fillStyle = '#F5F5F7';
+          roundRect(targetCtx, boxX2, boxY2, boxW2, boxH2, 14);
+          targetCtx.fill();
+
+          // Draw sketch transforming to 3D rendering
+          targetCtx.save();
+          targetCtx.translate(boxX2 + boxW2 / 2, boxY2 + 105);
+          // Rotating colorful starburst wand effect
+          const wandGrad = targetCtx.createLinearGradient(-60, -60, 60, 60);
+          wandGrad.addColorStop(0, '#FF2D55');
+          wandGrad.addColorStop(0.5, '#AF52DE');
+          wandGrad.addColorStop(1, '#2997FF');
+          targetCtx.fillStyle = wandGrad;
+          roundRect(targetCtx, -50, -50, 100, 100, 24);
+          targetCtx.fill();
+
+          // Sparkle trails
+          targetCtx.fillStyle = '#FFFFFF';
+          targetCtx.beginPath();
+          targetCtx.arc(0, 0, 18, 0, Math.PI * 2);
+          targetCtx.fill();
+          targetCtx.restore();
+
+          targetCtx.textAlign = 'center';
+          targetCtx.font = '600 13px -apple-system, sans-serif';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.fillText('Sketch  ➔  Photorealistic 3D', boxX2 + boxW2 / 2, boxY2 + 205);
+
+          targetCtx.font = '500 12px -apple-system, sans-serif';
+          targetCtx.fillStyle = '#86868B';
+          targetCtx.fillText('Instant on-device Diffusion', boxX2 + boxW2 / 2, boxY2 + 230);
+
+          targetCtx.restore();
+        }
+
+        // --- Column 3: CLEAN UP (13.4s) ---
+        const col3X = col2X + colW + colGap;
+        const pCol3 = springPunch(t, 13.4, 0.32);
+        if (pCol3 > 0.01) {
+          targetCtx.save();
+          targetCtx.translate(col3X + colW / 2, colY + colH / 2);
+          targetCtx.scale(pCol3, pCol3);
+          targetCtx.translate(-(col3X + colW / 2), -(colY + colH / 2));
+
+          targetCtx.fillStyle = '#FFFFFF';
+          roundRect(targetCtx, col3X, colY, colW, colH, 20);
+          targetCtx.fill();
+          targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+          targetCtx.lineWidth = 1;
+          targetCtx.stroke();
+
+          // Icon / Badge
+          targetCtx.fillStyle = 'rgba(255, 45, 85, 0.1)';
+          roundRect(targetCtx, col3X + 24, colY + 24, 48, 48, 14);
+          targetCtx.fill();
+          targetCtx.font = '700 22px -apple-system, sans-serif';
+          targetCtx.fillStyle = '#FF2D55';
+          targetCtx.textAlign = 'center';
+          targetCtx.textBaseline = 'middle';
+          targetCtx.fillText('🧹', col3X + 48, colY + 48);
+
+          targetCtx.textAlign = 'left';
+          targetCtx.font = '700 24px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.fillText('Clean Up', col3X + 24, colY + 104);
+
+          targetCtx.font = '500 15px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+          targetCtx.fillStyle = '#86868B';
+          targetCtx.fillText('Remove unwanted background items', col3X + 24, colY + 132);
+          targetCtx.fillText('with a single effortless tap.', col3X + 24, colY + 154);
+
+          // Simulated Clean Up Photo Canvas with Dissolve Particles
+          const boxX3 = col3X + 20;
+          const boxY3 = colY + 185;
+          const boxW3 = colW - 40;
+          const boxH3 = 265;
+          targetCtx.fillStyle = '#F5F5F7';
+          roundRect(targetCtx, boxX3, boxY3, boxW3, boxH3, 14);
+          targetCtx.fill();
+
+          // Photo horizon & mountain
+          targetCtx.save();
+          targetCtx.beginPath();
+          roundRect(targetCtx, boxX3 + 12, boxY3 + 12, boxW3 - 24, 150, 10);
+          targetCtx.clip();
+          const photoGrad = targetCtx.createLinearGradient(boxX3, boxY3, boxX3, boxY3 + 150);
+          photoGrad.addColorStop(0, '#E0F2FE');
+          photoGrad.addColorStop(1, '#BAE6FD');
+          targetCtx.fillStyle = photoGrad;
+          targetCtx.fillRect(boxX3, boxY3, boxW3, 160);
+
+          // Clean Up Rainbow Dust Sparkles
+          const particleCount = 18;
+          for (let p = 0; p < particleCount; p++) {
+            const px = boxX3 + 80 + Math.sin(p * 3.7 + t * 6) * 45;
+            const py = boxY3 + 80 + Math.cos(p * 2.1 + t * 5) * 35;
+            const pr = 2 + (p % 4);
+            targetCtx.fillStyle = p % 2 === 0 ? '#FF2D55' : '#2997FF';
+            targetCtx.beginPath();
+            targetCtx.arc(px, py, pr, 0, Math.PI * 2);
+            targetCtx.fill();
+          }
+          targetCtx.restore();
+
+          targetCtx.textAlign = 'center';
+          targetCtx.font = '600 13px -apple-system, sans-serif';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.fillText('Object Removed Seamlessly', boxX3 + boxW3 / 2, boxY3 + 205);
+
+          targetCtx.font = '500 12px -apple-system, sans-serif';
+          targetCtx.fillStyle = '#86868B';
+          targetCtx.fillText('Preserves shadows & reflections', boxX3 + boxW3 / 2, boxY3 + 230);
+
+          targetCtx.restore();
+        }
+
+        targetCtx.restore();
+      }
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // ACT 4: PRIVATE CLOUD COMPUTE (15.00s - 20.00s)
+    // Titanium Vector Padlock & "YOUR DATA NEVER LEAVES."
+    // ========================================================
+    function drawAct4(targetCtx, t) {
+      if (t < 14.8 || t >= 20.2) return;
+      const inAlpha = clamp((t - 14.8) / 0.4);
+      const outAlpha = t < 19.7 ? 1.0 : clamp(1.0 - (t - 19.7) / 0.4);
+      const actAlpha = inAlpha * outAlpha;
+
+      targetCtx.save();
+      targetCtx.globalAlpha = actAlpha;
+
+      // Cryptographic Cyan / Blue ambient rim
+      drawSiriGlowingPerimeterRim(targetCtx, t, 0.45);
+
+      // 1. Vector Security Padlock (Center Stage)
+      const lockX = W / 2;
+      const lockY = 360;
+      const pLock = springPunch(t, 15.0, 0.38);
+
+      if (pLock > 0.01) {
+        targetCtx.save();
+        targetCtx.translate(lockX, lockY);
+        targetCtx.scale(pLock, pLock);
+
+        // Security Halo Rings radiating
+        const ringP = clamp((t - 17.5) / 2.0);
+        if (ringP > 0) {
+          for (let r = 1; r <= 3; r++) {
+            const rad = 110 + r * 50 * ringP;
+            targetCtx.beginPath();
+            targetCtx.arc(0, 0, rad, 0, Math.PI * 2);
+            targetCtx.strokeStyle = 'rgba(0, 113, 227, ' + (0.45 / r) * (1 - ringP * 0.7) + ')';
+            targetCtx.lineWidth = 2;
+            targetCtx.stroke();
+          }
+        }
+
+        // Shackle Animation: Unlocked open before 17.5s, snaps closed at 17.5s!
+        const snapProgress = clamp((t - 17.4) / 0.14);
+        const shackleDrop = lerp(-36, 0, snapProgress); // Shackle slides down and snaps!
+
+        // Titanium Shackle
+        targetCtx.save();
+        targetCtx.translate(0, shackleDrop);
+        targetCtx.lineWidth = 22;
+        targetCtx.lineCap = 'round';
+        targetCtx.strokeStyle = '#8E8E93';
+
+        // Shackle U-shape
+        targetCtx.beginPath();
+        targetCtx.moveTo(-52, 10);
+        targetCtx.lineTo(-52, -50);
+        targetCtx.arc(0, -50, 52, Math.PI, 0);
+        targetCtx.lineTo(52, 10);
+        targetCtx.stroke();
+
+        // Shackle chrome highlight
+        targetCtx.lineWidth = 6;
+        targetCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        targetCtx.beginPath();
+        targetCtx.arc(0, -50, 52, Math.PI * 1.1, Math.PI * 1.9);
+        targetCtx.stroke();
+        targetCtx.restore();
+
+        // Padlock Body (Solid Titanium Dark Slate #1D1D1F with Chamfers)
+        const bw = 170;
+        const bh = 140;
+        shadowBaker.drawShadow(targetCtx, -bw / 2, -bh / 2 + 30, bw, bh, 0.9);
+
+        // Padlock Body Fill
+        const bodyGrad = targetCtx.createLinearGradient(-bw / 2, 0, bw / 2, 0);
+        bodyGrad.addColorStop(0, '#2C2C2E');
+        bodyGrad.addColorStop(0.5, '#1D1D1F');
+        bodyGrad.addColorStop(1, '#3A3A3C');
+        targetCtx.fillStyle = bodyGrad;
+        roundRect(targetCtx, -bw / 2, -bh / 2 + 30, bw, bh, 24);
+        targetCtx.fill();
+
+        // Subtle surgical steel border
+        targetCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        targetCtx.lineWidth = 1.5;
+        roundRect(targetCtx, -bw / 2, -bh / 2 + 30, bw, bh, 24);
+        targetCtx.stroke();
+
+        // Center Illuminated Privacy Keyhole / Apple Intelligence Crest
+        targetCtx.save();
+        targetCtx.translate(0, 30);
+        const crestGrad = targetCtx.createRadialGradient(0, 0, 2, 0, 0, 28);
+        crestGrad.addColorStop(0, '#FFFFFF');
+        crestGrad.addColorStop(0.5, '#2997FF');
+        crestGrad.addColorStop(1, '#0071E3');
+        targetCtx.fillStyle = crestGrad;
+
+        // Keyhole circle + slot
+        targetCtx.beginPath();
+        targetCtx.arc(0, -4, 12, 0, Math.PI * 2);
+        targetCtx.fill();
+        targetCtx.beginPath();
+        targetCtx.moveTo(-6, -2);
+        targetCtx.lineTo(6, -2);
+        targetCtx.lineTo(9, 20);
+        targetCtx.lineTo(-9, 20);
+        targetCtx.closePath();
+        targetCtx.fill();
+        targetCtx.restore();
+
+        targetCtx.restore();
+      }
+
+      // 2. Kinetic Stacked Typography (Zero Overlap, Generous Leading)
+      // Line 1: "PRIVATE CLOUD COMPUTE." (15.6s - 16.8s)
+      const pTitle = springPunch(t, 15.6, 0.32);
+      if (pTitle > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 600);
+        targetCtx.scale(pTitle, pTitle);
+        targetCtx.font = '800 96px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.035em';
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.fillText('PRIVATE CLOUD COMPUTE.', 0, 0);
+        targetCtx.restore();
+      }
+
+      // Line 2: "YOUR DATA NEVER LEAVES." (18.0s)
+      const pSub = springPunch(t, 18.0, 0.32);
+      if (pSub > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 710);
+        targetCtx.scale(pSub, pSub);
+        targetCtx.font = '700 70px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.025em';
+        targetCtx.fillStyle = '#0071E3';
+        targetCtx.fillText('YOUR DATA NEVER LEAVES.', 0, 0);
+        targetCtx.restore();
+      }
+
+      // 3. Cryptographic Verification Badges (18.8s)
+      const pBadges = springPunch(t, 18.8, 0.35);
+      if (pBadges > 0.01) {
+        targetCtx.save();
+        targetCtx.translate(W / 2, 810);
+        targetCtx.scale(pBadges, pBadges);
+
+        const badges = [
+          '🔒 Apple Silicon Servers',
+          '⚡ Zero Data Retention',
+          '🛡️ Openly Verifiable Code',
+          '🔑 Cryptographic Privacy'
+        ];
+
+        const bw = 240;
+        const bh = 42;
+        const totalBadgesW = badges.length * bw + (badges.length - 1) * 16;
+        let bStartX = -totalBadgesW / 2;
+
+        badges.forEach(text => {
+          targetCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+          targetCtx.lineWidth = 1;
+          roundRect(targetCtx, bStartX, -bh / 2, bw, bh, 21);
+          targetCtx.fill();
+          targetCtx.stroke();
+
+          targetCtx.font = '600 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.textAlign = 'center';
+          targetCtx.textBaseline = 'middle';
+          targetCtx.fillText(text, bStartX + bw / 2, 0);
+
+          bStartX += bw + 16;
+        });
+
+        targetCtx.restore();
+      }
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // ACT 5: M4 NEURAL ENGINE (20.00s - 25.00s)
+    // Silicon Architecture & "ON-DEVICE VELOCITY."
+    // ========================================================
+    function drawAct5(targetCtx, t) {
+      if (t < 19.8 || t >= 25.2) return;
+      const inAlpha = clamp((t - 19.8) / 0.4);
+      const outAlpha = t < 24.7 ? 1.0 : clamp(1.0 - (t - 24.7) / 0.4);
+      const actAlpha = inAlpha * outAlpha;
+
+      targetCtx.save();
+      targetCtx.globalAlpha = actAlpha;
+
+      // Neural copper/gold ambient rim
+      drawSiriGlowingPerimeterRim(targetCtx, t, 0.5);
+
+      // 1. Silicon Die Package (M4 Chip Visual)
+      const chipX = W / 2;
+      const chipY = 350;
+      const pChip = springPunch(t, 20.0, 0.38);
+
+      if (pChip > 0.01) {
+        targetCtx.save();
+        targetCtx.translate(chipX, chipY);
+        targetCtx.scale(pChip, pChip);
+
+        const chipW = 280;
+        const chipH = 280;
+
+        // Shadow under chip
+        shadowBaker.drawShadow(targetCtx, -chipW / 2, -chipH / 2, chipW, chipH, 0.95);
+
+        // Chip Carrier Substrate (#1D1D1F ceramic dark slate)
+        const chipGrad = targetCtx.createLinearGradient(-chipW / 2, -chipH / 2, chipW / 2, chipH / 2);
+        chipGrad.addColorStop(0, '#242426');
+        chipGrad.addColorStop(0.5, '#161618');
+        chipGrad.addColorStop(1, '#2D2D30');
+        targetCtx.fillStyle = chipGrad;
+        roundRect(targetCtx, -chipW / 2, -chipH / 2, chipW, chipH, 24);
+        targetCtx.fill();
+
+        // Laser-etched copper bevel
+        targetCtx.strokeStyle = 'rgba(255, 149, 0, 0.35)';
+        targetCtx.lineWidth = 1.5;
+        roundRect(targetCtx, -chipW / 2 + 4, -chipH / 2 + 4, chipW - 8, chipH - 8, 20);
+        targetCtx.stroke();
+
+        // Microscopic Neural Interconnect Grid (16-Core Neural Matrix)
+        const matrixSize = 4;
+        const coreW = 34;
+        const coreH = 34;
+        const coreGap = 8;
+        const matrixStartX = -(matrixSize * coreW + (matrixSize - 1) * coreGap) / 2;
+        const matrixStartY = -(matrixSize * coreH + (matrixSize - 1) * coreGap) / 2 + 20;
+
+        for (let r = 0; r < matrixSize; r++) {
+          for (let c = 0; c < matrixSize; c++) {
+            const cx = matrixStartX + c * (coreW + coreGap);
+            const cy = matrixStartY + r * (coreH + coreGap);
+
+            // Pulsing neural activity
+            const pulse = 0.5 + 0.5 * Math.sin(t * 8 + (r * 4 + c) * 0.8);
+            targetCtx.fillStyle = `rgba(41, 151, 255, ${0.15 + pulse * 0.5})`;
+            roundRect(targetCtx, cx, cy, coreW, coreH, 6);
+            targetCtx.fill();
+
+            targetCtx.strokeStyle = `rgba(255, 149, 0, ${0.2 + pulse * 0.6})`;
+            targetCtx.lineWidth = 1;
+            targetCtx.stroke();
+          }
+        }
+
+        // Chip Label: "M4" + Apple Logo
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.font = '800 48px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.fillStyle = '#FFFFFF';
+        targetCtx.letterSpacing = '-0.02em';
+        targetCtx.fillText('M4', 0, -82);
+
+        targetCtx.font = '600 11px -apple-system, monospace';
+        targetCtx.fillStyle = '#FF9500';
+        targetCtx.letterSpacing = '1.8px';
+        targetCtx.fillText('NEURAL ENGINE', 0, -56);
+
+        targetCtx.restore();
+      }
+
+      // 2. Kinetic Stacked Typography (Zero Overlap, Generous Leading)
+      // Line 1: "M4 NEURAL ENGINE." (20.8s)
+      const pTitle = springPunch(t, 20.8, 0.32);
+      if (pTitle > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 600);
+        targetCtx.scale(pTitle, pTitle);
+        targetCtx.font = '800 96px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.035em';
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.fillText('M4 NEURAL ENGINE.', 0, 0);
+        targetCtx.restore();
+      }
+
+      // Line 2: "ON-DEVICE VELOCITY." (23.0s)
+      const pSub = springPunch(t, 23.0, 0.32);
+      if (pSub > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 710);
+        targetCtx.scale(pSub, pSub);
+        targetCtx.font = '700 72px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.025em';
+
+        const textGrad = targetCtx.createLinearGradient(-350, 0, 350, 0);
+        textGrad.addColorStop(0, '#FF9500');
+        textGrad.addColorStop(0.5, '#FF2D55');
+        textGrad.addColorStop(1, '#AF52DE');
+        targetCtx.fillStyle = textGrad;
+        targetCtx.fillText('ON-DEVICE VELOCITY.', 0, 0);
+        targetCtx.restore();
+      }
+
+      // 3. Hardware Benchmark Metrics (23.8s)
+      const pMetrics = springPunch(t, 23.8, 0.35);
+      if (pMetrics > 0.01) {
+        targetCtx.save();
+        targetCtx.translate(W / 2, 810);
+        targetCtx.scale(pMetrics, pMetrics);
+
+        const metrics = [
+          { val: '38 TOPS', label: 'Neural Processing' },
+          { val: '16 CORES', label: 'Dedicated AI Hardware' },
+          { val: '120 GB/s', label: 'Unified Memory Bandwidth' }
+        ];
+
+        const mw = 260;
+        const mh = 54;
+        const totalW = metrics.length * mw + (metrics.length - 1) * 24;
+        let startX = -totalW / 2;
+
+        metrics.forEach(m => {
+          targetCtx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+          targetCtx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
+          targetCtx.lineWidth = 1;
+          roundRect(targetCtx, startX, -mh / 2, mw, mh, 16);
+          targetCtx.fill();
+          targetCtx.stroke();
+
+          targetCtx.textAlign = 'center';
+          targetCtx.textBaseline = 'middle';
+
+          targetCtx.font = '800 18px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+          targetCtx.fillStyle = '#1D1D1F';
+          targetCtx.fillText(m.val, startX + mw / 2, -7);
+
+          targetCtx.font = '500 11px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+          targetCtx.fillStyle = '#86868B';
+          targetCtx.fillText(m.label, startX + mw / 2, 13);
+
+          startX += mw + 24;
+        });
+
+        targetCtx.restore();
+      }
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // ACT 6: SOVEREIGN MASTER LOCKUP (25.00s - 30.00s)
+    // Grand Apple Intelligence Aura & Iconic Typography
+    // ========================================================
+    function drawAct6(targetCtx, t) {
+      if (t < 24.8) return;
+      const inAlpha = clamp((t - 24.8) / 0.45);
+
+      targetCtx.save();
+      targetCtx.globalAlpha = inAlpha;
+
+      // Radiant Siri glowing rim embracing the final master lockup
+      const pulse = 0.85 + 0.15 * Math.sin(t * 2.5);
+      drawSiriGlowingPerimeterRim(targetCtx, t, 0.8 * pulse);
+
+      // Center Apple Intelligence Sovereign Glowing Aura Glyph
+      const auraX = W / 2;
+      const auraY = 380;
+      const pGlyph = springPunch(t, 25.0, 0.45);
+
+      if (pGlyph > 0.01) {
+        targetCtx.save();
+        targetCtx.translate(auraX, auraY);
+        targetCtx.scale(pGlyph, pGlyph);
+
+        // Radiant multi-color iridescent halo rings
+        const auraGrad = targetCtx.createRadialGradient(0, 0, 10, 0, 0, 160);
+        auraGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+        auraGrad.addColorStop(0.3, 'rgba(41, 151, 255, 0.4)');
+        auraGrad.addColorStop(0.6, 'rgba(255, 45, 85, 0.25)');
+        auraGrad.addColorStop(0.85, 'rgba(255, 149, 0, 0.15)');
+        auraGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        targetCtx.fillStyle = auraGrad;
+        targetCtx.beginPath();
+        targetCtx.arc(0, 0, 160, 0, Math.PI * 2);
+        targetCtx.fill();
+
+        // Siri Fluid Infinity Loops (Apple Intelligence signature crest)
+        const ribbonColors = ['#2997FF', '#AF52DE', '#FF2D55', '#FF9500'];
+        for (let i = 0; i < 4; i++) {
+          const rot = (i * Math.PI / 2) + t * 0.4;
+          targetCtx.save();
+          targetCtx.rotate(rot);
+          targetCtx.beginPath();
+          targetCtx.ellipse(32, 0, 52, 26, 0, 0, Math.PI * 2);
+          targetCtx.strokeStyle = ribbonColors[i];
+          targetCtx.lineWidth = 6;
+          targetCtx.globalAlpha = 0.85;
+          targetCtx.stroke();
+          targetCtx.restore();
+        }
+
+        // Central pure Apple logo silhouette
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.beginPath();
+        targetCtx.arc(-4, 2, 14, 0, Math.PI * 2);
+        targetCtx.arc(4, 2, 14, 0, Math.PI * 2);
+        targetCtx.fill();
+
+        targetCtx.beginPath();
+        targetCtx.ellipse(1, -16, 6, 3.5, Math.PI / 4, 0, Math.PI * 2);
+        targetCtx.fill();
+
+        targetCtx.restore();
+      }
+
+      // Sovereign Headline: "APPLE INTELLIGENCE." (25.6s - 26.3s)
+      const pHead = springPunch(t, 25.6, 0.35);
+      if (pHead > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 600);
+        targetCtx.scale(pHead, pHead);
+        targetCtx.font = '800 110px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.04em';
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.fillText('APPLE INTELLIGENCE.', 0, 0);
+        targetCtx.restore();
+      }
+
+      // Sovereign Subhead: "AI FOR THE REST OF US." (26.6s)
+      const pSub = springPunch(t, 26.6, 0.35);
+      if (pSub > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 705);
+        targetCtx.scale(pSub, pSub);
+        targetCtx.font = '700 48px -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif';
+        targetCtx.letterSpacing = '-0.025em';
+
+        const headGrad = targetCtx.createLinearGradient(-300, 0, 300, 0);
+        headGrad.addColorStop(0, '#0071E3');
+        headGrad.addColorStop(0.5, '#AF52DE');
+        headGrad.addColorStop(1, '#FF2D55');
+        targetCtx.fillStyle = headGrad;
+        targetCtx.fillText('AI FOR THE REST OF US.', 0, 0);
+        targetCtx.restore();
+      }
+
+      // Device Availability Footer (27.2s)
+      const pFooter = springPunch(t, 27.2, 0.35);
+      if (pFooter > 0.01) {
+        targetCtx.save();
+        targetCtx.textAlign = 'center';
+        targetCtx.textBaseline = 'middle';
+        targetCtx.translate(W / 2, 800);
+        targetCtx.scale(pFooter, pFooter);
+
+        targetCtx.font = '600 22px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+        targetCtx.fillStyle = '#1D1D1F';
+        targetCtx.letterSpacing = '0.2px';
+        targetCtx.fillText('iPhone 16 Pro  •  iPad Pro M4  •  MacBook Pro & Mac Studio', 0, 0);
+
+        targetCtx.font = '500 16px -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif';
+        targetCtx.fillStyle = '#86868B';
+        targetCtx.fillText('Available now in macOS Sequoia 15.1, iOS 18.1, and iPadOS 18.1', 0, 36);
+
+        targetCtx.restore();
+      }
+
+      targetCtx.restore();
+    }
+
+    // ========================================================
+    // MASTER FRAME RENDERER: window.__renderFrameAt(t)
+    // ========================================================
+    window.__renderFrameAt = function(t) {
+      const curTime = clamp(t, 0, TOTAL_DURATION);
+
+      // 1. Background Alabaster Environment
+      drawCupertinoEnvironment(ctx, curTime);
+
+      // 2. Clean Top Bar
+      drawCleanTopBar(ctx, curTime);
+
+      // 3. Render Appropriate Act Content
+      if (curTime < 5.2) {
+        drawAct1(ctx, curTime);
+      }
+      if (curTime >= 4.8 && curTime < 10.2) {
+        drawAct2(ctx, curTime);
+      }
+      if (curTime >= 9.8 && curTime < 15.2) {
+        drawAct3(ctx, curTime);
+      }
+      if (curTime >= 14.8 && curTime < 20.2) {
+        drawAct4(ctx, curTime);
+      }
+      if (curTime >= 19.8 && curTime < 25.2) {
+        drawAct5(ctx, curTime);
+      }
+      if (curTime >= 24.8) {
+        drawAct6(ctx, curTime);
+      }
+    };
+
+    // ========================================================
+    // PLAYBACK & INTERACTIVE SCRUBBER CONTROLS
+    // ========================================================
+    let currentTime = 0.0;
+    let isPlaying = false;
+    let lastAnimTime = performance.now();
+
+    function updateTime(t) {
+      currentTime = clamp(t, 0, TOTAL_DURATION);
+      slider.value = currentTime;
+      const s = Math.floor(currentTime);
+      const ms = Math.floor((currentTime - s) * 100);
+      timeLabel.textContent = `00:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+      window.__renderFrameAt(currentTime);
+    }
+
+    slider.addEventListener('input', (e) => {
+      isPlaying = false;
+      btnPlay.textContent = 'PLAY';
+      updateTime(parseFloat(e.target.value));
+    });
+
+    btnPlay.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      btnPlay.textContent = isPlaying ? 'PAUSE' : 'PLAY';
+      if (isPlaying && currentTime >= TOTAL_DURATION) currentTime = 0;
+      lastAnimTime = performance.now();
+    });
+
+    jumpBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        isPlaying = false;
+        btnPlay.textContent = 'PLAY';
+        updateTime(parseFloat(btn.dataset.time));
+      });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        btnPlay.click();
+      }
+    });
+
+    function animationLoop(now) {
+      if (isPlaying) {
+        const dt = (now - lastAnimTime) / 1000;
+        currentTime += dt;
+        if (currentTime > TOTAL_DURATION) {
+          currentTime = 0.0;
+        }
+        updateTime(currentTime);
+      }
+      lastAnimTime = now;
+      requestAnimationFrame(animationLoop);
+    }
+    requestAnimationFrame(animationLoop);
+
+    // Initial render at 0.0s
+    updateTime(0.0);
+  </script>
+</body>
+</html>

@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SpaceX // Grok 3 India — Orbital Autonomous Guidance (30s Launch Suite)</title>
+  <style>
+    @font-face {
+      font-family: 'AntonLocal';
+      src: url('../public/fonts/Anton-Regular.ttf') format('truetype');
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: 'InterLocal';
+      src: url('../public/fonts/InterVariable.woff2') format('woff2');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #050608;
+      font-family: 'InterLocal', 'Plus Jakarta Sans', -apple-system, sans-serif;
+      color: #F0F2F5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #stage-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      box-shadow: 0 40px 140px rgba(0, 0, 0, 0.92);
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    canvas#motion-stage {
+      display: block;
+      width: 1920px;
+      height: 1080px;
+      background: #08090C;
+    }
+
+    /* Floating Aerospace Scrubber Bar */
+    #playback-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(12, 14, 18, 0.94);
+      backdrop-filter: blur(20px);
+      border: 1.5px solid rgba(255, 107, 0, 0.4);
+      border-radius: 9999px;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      z-index: 1000;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(255, 107, 0, 0.15);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+
+    button.ctrl-btn {
+      background: #FF6B00;
+      color: #08090C;
+      border: none;
+      padding: 7px 18px;
+      border-radius: 9999px;
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      transition: transform 0.1s, background-color 0.1s;
+    }
+    button.ctrl-btn:hover { background: #FFA000; }
+    button.ctrl-btn:active { transform: scale(0.96); }
+
+    .jump-btn {
+      background: rgba(255, 255, 255, 0.06);
+      color: #F0F2F5;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .jump-btn:hover {
+      background: rgba(255, 107, 0, 0.2);
+      border-color: #FF6B00;
+      color: #FFA000;
+    }
+
+    input[type=range] {
+      width: 260px;
+      accent-color: #FF6B00;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <canvas id="motion-stage" width="1920" height="1080"></canvas>
+  </div>
+
+  <div id="playback-bar">
+    <button class="ctrl-btn" id="btn-play-toggle">PLAY / PAUSE</button>
+    <input type="range" id="time-slider" min="0" max="30.0" step="0.0333" value="0">
+    <span id="time-label" style="font-weight: 700; color: #FFA000; min-width: 90px;">00:00.00</span>
+    <div style="display: flex; gap: 6px;">
+      <button class="jump-btn" data-time="0.0">ACT 1: STARSHIP</button>
+      <button class="jump-btn" data-time="5.0">ACT 2: GIMBAL HUD</button>
+      <button class="jump-btn" data-time="10.0">ACT 3: GROK 3</button>
+      <button class="jump-btn" data-time="15.0">ACT 4: INDIA AI</button>
+      <button class="jump-btn" data-time="20.0">ACT 5: STARLINK</button>
+      <button class="jump-btn" data-time="25.0">ACT 6: LOCKUP</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('motion-stage');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const container = document.getElementById('stage-container');
+    const slider = document.getElementById('time-slider');
+    const timeLabel = document.getElementById('time-label');
+    const btnPlay = document.getElementById('btn-play-toggle');
+
+    const W = 1920;
+    const H = 1080;
+    const TOTAL_DURATION = 30.0;
+
+    // Viewport auto-scaling
+    function resizeStage() {
+      const availW = window.innerWidth - 60;
+      const availH = window.innerHeight - 120;
+      const scale = Math.min(availW / W, availH / H, 1.0);
+      container.style.transform = `scale(${scale})`;
+    }
+    window.addEventListener('resize', resizeStage);
+    resizeStage();
+
+    // ========================================================
+    // MATHEMATICAL EASINGS & KINETIC ENGINES
+    // ========================================================
+    const clamp = (v, min = 0, max = 1) => Math.max(min, Math.min(max, v));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    function easeOutExpo(x) {
+      return x === 1 ? 1 : 1 - Math.pow(2, -10 * clamp(x));
+    }
+
+    function easeOutCubic(x) {
+      return 1 - Math.pow(1 - clamp(x), 3);
+    }
+
+    function easeInOutQuad(x) {
+      const c = clamp(x);
+      return c < 0.5 ? 2 * c * c : 1 - Math.pow(-2 * c + 2, 2) / 2;
+    }
+
+    // Fast spring punch for tactile word pops
+    function springPunch(t, start, dur = 0.18, s = 1.35) {
+      if (t <= start) return 0;
+      const p = Math.min(1, (t - start) / dur);
+      const p1 = p - 1;
+      return p1 * p1 * ((s + 1) * p1 + s) + 1;
+    }
+
+    // Deterministic PRNG
+    function prng(seed) {
+      let s = (seed += 0x6d2b79f5);
+      s = Math.imul(s ^ (s >>> 15), s | 1);
+      s ^= s + Math.imul(s ^ (s >>> 7), s | 61);
+      return ((s ^ (s >>> 14)) >>> 0) / 4294967296;
+    }
+
+    // Cached Starfield & Space Dust
+    const NUM_STARS = 160;
+    const STARS = [];
+    for (let i = 0; i < NUM_STARS; i++) {
+      STARS.push({
+        x: prng(i * 13) * W,
+        y: prng(i * 29) * H,
+        r: 0.6 + prng(i * 7) * 1.8,
+        alpha: 0.15 + prng(i * 19) * 0.65,
+        speed: 0.2 + prng(i * 31) * 0.8
+      });
+    }
+
+    // Propulsion Particles for Climax Act
+    const NUM_THRUST_PARTICLES = 220;
+    const THRUST_PARTICLES = [];
+    for (let i = 0; i < NUM_THRUST_PARTICLES; i++) {
+      THRUST_PARTICLES.push({
+        seed: i,
+        baseX: (prng(i * 37) - 0.5) * 500,
+        baseSpeed: 500 + prng(i * 43) * 1200,
+        size: 3 + prng(i * 17) * 9,
+        life: 0.5 + prng(i * 23) * 0.9,
+        colorIndex: prng(i * 11) > 0.4 ? 0 : 1 // 0: Amber, 1: Saffron/White
+      });
+    }
+
+    // ========================================================
+    // DRAWING HELPERS: RETICLES, HUD, HAILINES, GLOWS
+    // ========================================================
+    function drawCornerBrackets(ctx, x, y, w, h, size = 16, color = 'rgba(240, 242, 245, 0.3)', lineWidth = 1.5) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.beginPath();
+      ctx.moveTo(x, y + size); ctx.lineTo(x, y); ctx.lineTo(x + size, y);
+      ctx.moveTo(x + w - size, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + size);
+      ctx.moveTo(x, y + h - size); ctx.lineTo(x, y + h); ctx.lineTo(x + size, y + h);
+      ctx.moveTo(x + w - size, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - size);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawCleanTopBar(ctx, t) {
+      ctx.save();
+      // Subtle top glass banner background
+      const grad = ctx.createLinearGradient(0, 0, 0, 72);
+      grad.addColorStop(0, 'rgba(12, 14, 18, 0.92)');
+      grad.addColorStop(1, 'rgba(8, 9, 12, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, 72);
+
+      // Top dividing line
+      ctx.strokeStyle = 'rgba(240, 242, 245, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(60, 68);
+      ctx.lineTo(W - 60, 68);
+      ctx.stroke();
+
+      // Top Left Brand Lockup (Clean, no debug frames)
+      ctx.font = '700 17px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#FFA000';
+      ctx.fillText('SPACEX', 64, 44);
+
+      ctx.fillStyle = 'rgba(240, 242, 245, 0.4)';
+      ctx.fillText(' // ', 146, 44);
+
+      ctx.fillStyle = '#F0F2F5';
+      ctx.fillText('STARSHIP x GROK', 188, 44);
+
+      // Telemetry Center Pill
+      const pulse = 0.5 + Math.sin(t * 6) * 0.5;
+      ctx.fillStyle = `rgba(0, 229, 255, ${0.4 + pulse * 0.6})`;
+      ctx.beginPath();
+      ctx.arc(W / 2 - 140, 39, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.font = '600 13px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#00E5FF';
+      ctx.fillText('ORBITAL AUTONOMOUS FLIGHT SUITE', W / 2 - 124, 43);
+
+      // Top Right Coordinates
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(240, 242, 245, 0.6)';
+      ctx.font = '500 13px "JetBrains Mono", monospace';
+      ctx.fillText('LAT 25.99° N // LON 97.15° W // AZ 092°', W - 64, 43);
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ZERO-OVERLAP STACKED KINETIC TYPOGRAPHY HELPER
+    // ========================================================
+    function renderKineticPhrase(ctx, cfg) {
+      const {
+        words,
+        startTimes,
+        t,
+        x,
+        y,
+        fontSize = 110,
+        fontFamily = 'AntonLocal, Anton, Impact, sans-serif',
+        align = 'center',
+        colors = ['#F0F2F5'],
+        tracking = 2,
+        scaleOvershoot = 1.3
+      } = cfg;
+
+      ctx.save();
+      ctx.font = `${fontSize}px ${fontFamily}`;
+      ctx.textBaseline = 'alphabetic';
+
+      // Measure total widths
+      const wordMetrics = words.map(w => ({
+        word: w,
+        w: ctx.measureText(w).width
+      }));
+      const spaceWidth = ctx.measureText(' ').width * 1.2;
+      const totalWidth = wordMetrics.reduce((acc, m) => acc + m.w, 0) + (words.length - 1) * spaceWidth;
+
+      let startX = x;
+      if (align === 'center') {
+        startX = x - totalWidth / 2;
+      } else if (align === 'right') {
+        startX = x - totalWidth;
+      }
+
+      let curX = startX;
+      for (let i = 0; i < words.length; i++) {
+        const item = wordMetrics[i];
+        const sTime = startTimes[i];
+
+        if (t >= sTime) {
+          const punch = springPunch(t, sTime, 0.22, scaleOvershoot);
+          const alpha = clamp((t - sTime) / 0.12);
+          const color = colors[i % colors.length];
+
+          ctx.save();
+          // Anchor scaling around word center
+          const wordCenter = curX + item.w / 2;
+          ctx.translate(wordCenter, y);
+          ctx.scale(punch, punch);
+          ctx.translate(-wordCenter, -y);
+
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = color;
+          ctx.fillText(item.word, curX, y);
+
+          // Subtle glowing rim on pop
+          if (t - sTime < 0.25) {
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 24 * (1 - (t - sTime) / 0.25);
+            ctx.fillText(item.word, curX, y);
+          }
+
+          ctx.restore();
+        }
+
+        curX += item.w + spaceWidth;
+      }
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ACT 1: 0.0s - 5.0s ("STARSHIP x GROK." -> "ORBITAL AUTONOMY.")
+    // ========================================================
+    function renderAct1(ctx, t) {
+      const actProgress = clamp(t / 5.0);
+      const fadeOut = t > 4.4 ? 1 - (t - 4.4) / 0.6 : 1;
+      ctx.save();
+      ctx.globalAlpha = fadeOut;
+
+      // Atmospheric shockwave ring
+      const shockwave = clamp(t / 2.5);
+      if (shockwave > 0 && shockwave < 1) {
+        ctx.save();
+        ctx.strokeStyle = `rgba(255, 107, 0, ${0.4 * (1 - shockwave)})`;
+        ctx.lineWidth = 2 + (1 - shockwave) * 6;
+        ctx.beginPath();
+        ctx.arc(W / 2, H / 2, shockwave * 900, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Orbital curvature horizon in background
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(W / 2, H * 1.45, 1400, 750, 0, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.stroke();
+      ctx.restore();
+
+      if (t < 2.5) {
+        // Line 1: STARSHIP (0.4s) x (1.0s) GROK. (1.5s)
+        renderKineticPhrase(ctx, {
+          words: ['STARSHIP', 'x', 'GROK.'],
+          startTimes: [0.4, 1.0, 1.5],
+          t,
+          x: W / 2,
+          y: H / 2 + 35,
+          fontSize: 140,
+          colors: ['#F0F2F5', '#FF9933', '#00E5FF']
+        });
+
+        // Subtitle tag
+        if (t > 1.8) {
+          const subAlpha = clamp((t - 1.8) / 0.3);
+          ctx.save();
+          ctx.globalAlpha = subAlpha * fadeOut;
+          ctx.font = '600 20px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#FFA000';
+          ctx.textAlign = 'center';
+          ctx.letterSpacing = '4px';
+          ctx.fillText('NEXT-GEN HEAVY LAUNCH VEHICLE // NEURAL AUTONOMOUS GUIDANCE', W / 2, H / 2 + 130);
+          ctx.restore();
+        }
+      } else {
+        // Line 2: ORBITAL (2.6s) AUTONOMY. (3.3s)
+        renderKineticPhrase(ctx, {
+          words: ['ORBITAL', 'AUTONOMY.'],
+          startTimes: [2.6, 3.3],
+          t,
+          x: W / 2,
+          y: H / 2 + 35,
+          fontSize: 146,
+          colors: ['#FFA000', '#F0F2F5']
+        });
+
+        if (t > 3.6) {
+          const subAlpha = clamp((t - 3.6) / 0.3);
+          ctx.save();
+          ctx.globalAlpha = subAlpha * fadeOut;
+          ctx.font = '600 20px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#00E5FF';
+          ctx.textAlign = 'center';
+          ctx.fillText('ZERO-HUMAN IN-THE-LOOP FLIGHT COMPUTATION // STARBASE TX', W / 2, H / 2 + 130);
+          ctx.restore();
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ACT 2: 5.0s - 10.0s (Starship Vector Engine Gimbal HUD)
+    // ========================================================
+    function renderAct2(ctx, t) {
+      const localT = t - 5.0;
+      const fadeIn = clamp(localT / 0.5);
+      const fadeOut = localT > 4.4 ? 1 - (localT - 4.4) / 0.6 : 1;
+      ctx.save();
+      ctx.globalAlpha = fadeIn * fadeOut;
+
+      // Section Header Banner
+      ctx.font = '700 16px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#FF6B00';
+      ctx.fillText('[ TELEMETRY STAGE 02: RAPTOR 3 GIMBAL HUD ]', 120, 140);
+
+      // Section Title
+      ctx.font = '800 52px "InterLocal", sans-serif';
+      ctx.fillStyle = '#F0F2F5';
+      ctx.fillText('STARSHIP VECTOR ENGINE GIMBAL', 120, 204);
+
+      // Center Raptor Engine Gimbal Vector Reticle (Left Side: X: 420, Y: 580)
+      const gx = 440;
+      const gy = 590;
+      const gRadius = 240;
+
+      // Gimbal Outer Casing Rings
+      ctx.save();
+      ctx.strokeStyle = 'rgba(240, 242, 245, 0.2)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(gx, gy, gRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(255, 107, 0, 0.4)';
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.arc(gx, gy, gRadius * 0.75, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Gimbal Deflection Angle Vector Simulation
+      const gimbalAngleX = Math.sin(localT * 3.2) * 5.4; // degrees
+      const gimbalAngleY = Math.cos(localT * 2.8) * 4.2;
+      const defX = gx + (gimbalAngleX / 7.5) * (gRadius * 0.45);
+      const defY = gy + (gimbalAngleY / 7.5) * (gRadius * 0.45);
+
+      // Engine Bell Vector
+      ctx.strokeStyle = '#FF6B00';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(gx, gy);
+      ctx.lineTo(defX, defY);
+      ctx.stroke();
+
+      // Gimbal Core Target Lock Ring
+      ctx.fillStyle = '#FF9933';
+      ctx.beginPath();
+      ctx.arc(defX, defY, 14, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Flame exhaust vector glow from gimbal nozzle
+      const flameGrad = ctx.createRadialGradient(defX, defY, 6, defX, defY, 80);
+      flameGrad.addColorStop(0, 'rgba(255, 160, 0, 0.8)');
+      flameGrad.addColorStop(0.5, 'rgba(255, 107, 0, 0.3)');
+      flameGrad.addColorStop(1, 'rgba(8, 9, 12, 0)');
+      ctx.fillStyle = flameGrad;
+      ctx.beginPath();
+      ctx.arc(defX, defY, 80, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Gimbal Reticle Degree Labels
+      ctx.font = '600 13px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#FFA000';
+      ctx.fillText(`PITCH: ${gimbalAngleX.toFixed(2)}°`, gx - 70, gy + gRadius + 32);
+      ctx.fillText(`YAW:   ${gimbalAngleY.toFixed(2)}°`, gx - 70, gy + gRadius + 54);
+      ctx.restore();
+
+      // 4 Telemetry Metrics HUD Cards (Right Side: X: 840 to 1800)
+      const metrics = [
+        {
+          label: 'CURRENT ALTITUDE',
+          val: (138.2 + clamp(localT / 4.5) * 4.2).toFixed(1) + ' km',
+          status: 'ORBITAL EXOSPHERE',
+          time: 0.6,
+          color: '#00E5FF'
+        },
+        {
+          label: 'ORBITAL VELOCITY',
+          val: Math.floor(7420 + clamp(localT / 4.5) * 430).toLocaleString() + ' m/s',
+          status: 'MACH 23.1 // ACCELERATING',
+          time: 1.4,
+          color: '#FFA000'
+        },
+        {
+          label: 'LOX TANK PRESSURE',
+          val: '98.4 %',
+          status: 'SUB-COOLED LIQUID CHILL',
+          time: 2.2,
+          color: '#00E5FF'
+        },
+        {
+          label: 'MAIN ENGINE THROTTLE',
+          val: '100% FULL THRUST',
+          status: '33/33 RAPTOR 3 FIRING',
+          time: 3.0,
+          color: '#FF6B00'
+        }
+      ];
+
+      const startCardY = 260;
+      const cardHeight = 120;
+      const cardSpacing = 16;
+      const cardX = 840;
+      const cardW = 960;
+
+      metrics.forEach((m, idx) => {
+        if (localT >= m.time) {
+          const cardPunch = springPunch(localT, m.time, 0.2, 1.25);
+          const cardY = startCardY + idx * (cardHeight + cardSpacing);
+
+          ctx.save();
+          ctx.translate(cardX + cardW / 2, cardY + cardHeight / 2);
+          ctx.scale(cardPunch, cardPunch);
+          ctx.translate(-(cardX + cardW / 2), -(cardY + cardHeight / 2));
+
+          // Card Background
+          ctx.fillStyle = 'rgba(16, 19, 26, 0.85)';
+          ctx.beginPath();
+          ctx.roundRect(cardX, cardY, cardW, cardHeight, 10);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(240, 242, 245, 0.12)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Left Accent Accent Stripe
+          ctx.fillStyle = m.color;
+          ctx.fillRect(cardX, cardY, 6, cardHeight);
+
+          // Card Text
+          ctx.font = '600 14px "JetBrains Mono", monospace';
+          ctx.fillStyle = 'rgba(240, 242, 245, 0.55)';
+          ctx.fillText(m.label, cardX + 32, cardY + 38);
+
+          ctx.font = '800 42px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#F0F2F5';
+          ctx.fillText(m.val, cardX + 32, cardY + 84);
+
+          // Status Badge
+          ctx.font = '700 13px "JetBrains Mono", monospace';
+          ctx.fillStyle = m.color;
+          ctx.textAlign = 'right';
+          ctx.fillText(m.status, cardX + cardW - 32, cardY + 42);
+
+          // Mini progress bar in card
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.fillRect(cardX + cardW - 280, cardY + 68, 248, 8);
+          ctx.fillStyle = m.color;
+          const barFill = idx === 3 ? 1.0 : (0.7 + idx * 0.09);
+          ctx.fillRect(cardX + cardW - 280, cardY + 68, 248 * barFill, 8);
+
+          ctx.restore();
+        }
+      });
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ACT 3: 10.0s - 15.0s (Grok 3 Autonomous Neural Guidance)
+    // ========================================================
+    function renderAct3(ctx, t) {
+      const localT = t - 10.0;
+      const fadeIn = clamp(localT / 0.5);
+      const fadeOut = localT > 4.4 ? 1 - (localT - 4.4) / 0.6 : 1;
+      ctx.save();
+      ctx.globalAlpha = fadeIn * fadeOut;
+
+      // Header Tag
+      ctx.font = '700 16px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#00E5FF';
+      ctx.fillText('[ NEURAL NAVIGATION CORE // GROK 3 ]', 120, 140);
+
+      // Section Title Stack
+      renderKineticPhrase(ctx, {
+        words: ['GROK 3', 'AUTONOMOUS', 'GUIDANCE.'],
+        startTimes: [10.2, 10.6, 11.1],
+        t,
+        x: 120,
+        y: 215,
+        fontSize: 56,
+        align: 'left',
+        colors: ['#00E5FF', '#F0F2F5', '#FFA000']
+      });
+
+      // 2D Vector Radar Grid (Center Right: X: 1220, Y: 580)
+      const rx = 1260;
+      const ry = 580;
+      const rSize = 340;
+
+      ctx.save();
+      // Radar Background & Grid Lines
+      ctx.fillStyle = 'rgba(10, 18, 24, 0.7)';
+      ctx.beginPath();
+      ctx.arc(rx, ry, rSize, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.2)';
+      ctx.lineWidth = 1;
+      // Concentric Radar Rings
+      [0.25, 0.5, 0.75, 1.0].forEach(frac => {
+        ctx.beginPath();
+        ctx.arc(rx, ry, rSize * frac, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+
+      // Crosshairs
+      ctx.beginPath();
+      ctx.moveTo(rx - rSize, ry); ctx.lineTo(rx + rSize, ry);
+      ctx.moveTo(rx, ry - rSize); ctx.lineTo(rx, ry + rSize);
+      ctx.stroke();
+
+      // Rotating Radar Sweep Vector
+      const sweepAngle = (localT * 3.5) % (Math.PI * 2);
+      const sweepGrad = ctx.createConicGradient(sweepAngle, rx, ry);
+      sweepGrad.addColorStop(0, 'rgba(0, 229, 255, 0.45)');
+      sweepGrad.addColorStop(0.15, 'rgba(0, 229, 255, 0.0)');
+      sweepGrad.addColorStop(1, 'rgba(0, 229, 255, 0.0)');
+      ctx.fillStyle = sweepGrad;
+      ctx.beginPath();
+      ctx.arc(rx, ry, rSize, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Radar Trajectory Targets
+      const targetPulse = Math.sin(localT * 8) * 0.5 + 0.5;
+      const targetX = rx + Math.cos(localT * 0.8) * 160;
+      const targetY = ry + Math.sin(localT * 0.8) * 110;
+
+      // Trajectory Lock Box
+      drawCornerBrackets(ctx, targetX - 24, targetY - 24, 48, 48, 10, '#00E5FF', 2);
+      ctx.fillStyle = `rgba(0, 229, 255, ${0.4 + targetPulse * 0.6})`;
+      ctx.beginPath();
+      ctx.arc(targetX, targetY, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.font = '700 12px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#00E5FF';
+      ctx.fillText('TARGET LOCK: 28.5° INCLINATION', targetX + 32, targetY - 8);
+      ctx.fillText('AUTONOMOUS WAYPOINT: LEO-INSERTION', targetX + 32, targetY + 12);
+      ctx.restore();
+
+      // Left Panel: Neural Compute Metrics & Live Tensor Logs
+      const logX = 120;
+      const logY = 280;
+      const logW = 740;
+      const logH = 640;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(12, 16, 22, 0.85)';
+      ctx.beginPath();
+      ctx.roundRect(logX, logY, logW, logH, 12);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.2)';
+      ctx.stroke();
+
+      // Inside Terminal Card
+      ctx.font = '700 15px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#00E5FF';
+      ctx.fillText('// GROK 3 NEURAL TENSOR MATRIX', logX + 32, logY + 44);
+
+      const neuralMetrics = [
+        { key: 'RECURRENT LATENCY', val: '0.42 ms', bar: 0.15 },
+        { key: 'NEURAL GUIDANCE PRECISION', val: '99.9998%', bar: 0.99 },
+        { key: 'AUTONOMOUS VECTOR DRIFT', val: '0.0002 m/s²', bar: 0.08 },
+        { key: 'ACTIVE PARAMETERS IN LEO', val: '4.8 PFLOPS EDGE', bar: 0.88 },
+        { key: 'COLLISION PREDICTION HORIZON', val: '48,000 SECONDS', bar: 0.95 }
+      ];
+
+      neuralMetrics.forEach((nm, i) => {
+        const itemY = logY + 100 + i * 95;
+        ctx.font = '600 13px "JetBrains Mono", monospace';
+        ctx.fillStyle = 'rgba(240, 242, 245, 0.6)';
+        ctx.fillText(nm.key, logX + 32, itemY);
+
+        ctx.font = '700 24px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#F0F2F5';
+        ctx.fillText(nm.val, logX + 32, itemY + 32);
+
+        // Bar indicator
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.fillRect(logX + 32, itemY + 44, logW - 64, 6);
+        ctx.fillStyle = i === 1 ? '#00E5FF' : '#FFA000';
+        ctx.fillRect(logX + 32, itemY + 44, (logW - 64) * nm.bar, 6);
+      });
+
+      ctx.restore();
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ACT 4: 15.0s - 20.0s (Bilingual Aerospace: SPACEX AI INDIA -> अन्तरिक्ष स्वायत्तता)
+    // ========================================================
+    function renderAct4(ctx, t) {
+      const localT = t - 15.0;
+      const fadeIn = clamp(localT / 0.5);
+      const fadeOut = localT > 4.4 ? 1 - (localT - 4.4) / 0.6 : 1;
+      ctx.save();
+      ctx.globalAlpha = fadeIn * fadeOut;
+
+      // Saffron & Deep Space Cyan Radial Energy
+      const bgGrad = ctx.createRadialGradient(W / 2, H / 2, 80, W / 2, H / 2, 850);
+      bgGrad.addColorStop(0, 'rgba(255, 153, 51, 0.12)');
+      bgGrad.addColorStop(0.5, 'rgba(0, 229, 255, 0.06)');
+      bgGrad.addColorStop(1, 'rgba(8, 9, 12, 0)');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, W, H);
+
+      // Section Subtitle
+      ctx.font = '700 16px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#FF9933';
+      ctx.textAlign = 'center';
+      ctx.fillText('[ BILATERAL AEROSPACE TECH TELEMETRY // INDIA & STARBASE ]', W / 2, 220);
+
+      if (localT < 2.5) {
+        // Line 1: SPACEX (15.4s) AI (16.0s) INDIA. (16.6s)
+        renderKineticPhrase(ctx, {
+          words: ['SPACEX', 'AI', 'INDIA.'],
+          startTimes: [15.4, 16.0, 16.6],
+          t,
+          x: W / 2,
+          y: H / 2 + 35,
+          fontSize: 140,
+          colors: ['#F0F2F5', '#00E5FF', '#FF9933']
+        });
+
+        if (localT > 1.8) {
+          ctx.save();
+          ctx.font = '600 22px "JetBrains Mono", monospace';
+          ctx.fillStyle = 'rgba(240, 242, 245, 0.7)';
+          ctx.textAlign = 'center';
+          ctx.fillText('SOVEREIGN GROUND STATION MESH & ORBITAL INTEGRATION', W / 2, H / 2 + 130);
+          ctx.restore();
+        }
+      } else {
+        // Line 2: Hindi Typography: अंतरिक्ष स्वायत्तता (Space Autonomy)
+        const hindiTime = 17.6;
+        if (t >= hindiTime) {
+          const punch = springPunch(t, hindiTime, 0.25, 1.3);
+          const alpha = clamp((t - hindiTime) / 0.15);
+
+          ctx.save();
+          ctx.translate(W / 2, H / 2 + 40);
+          ctx.scale(punch, punch);
+          ctx.translate(-W / 2, -(H / 2 + 40));
+
+          ctx.globalAlpha = alpha;
+          // Devanagari typography
+          ctx.font = '900 130px "Kohinoor Devanagari", "ITF Devanagari", "Noto Sans Devanagari", "Devanagari MT", sans-serif';
+          ctx.textAlign = 'center';
+
+          // Saffron gradient glow for the Hindi typography
+          const textGrad = ctx.createLinearGradient(W / 2 - 400, 0, W / 2 + 400, 0);
+          textGrad.addColorStop(0, '#FF9933'); // Saffron
+          textGrad.addColorStop(0.5, '#FFFFFF'); // Pure White
+          textGrad.addColorStop(1, '#00E5FF'); // Cyan
+          ctx.fillStyle = textGrad;
+          ctx.fillText('अंतरिक्ष स्वायत्तता', W / 2, H / 2 + 40);
+
+          // Subtle glow shadow
+          ctx.shadowColor = '#FF9933';
+          ctx.shadowBlur = 30;
+          ctx.fillText('अंतरिक्ष स्वायत्तता', W / 2, H / 2 + 40);
+          ctx.restore();
+        }
+
+        // Subtitle Translation Tag
+        if (localT > 3.0) {
+          const subAlpha = clamp((localT - 3.0) / 0.25);
+          ctx.save();
+          ctx.globalAlpha = subAlpha;
+          ctx.font = '700 24px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#FFA000';
+          ctx.textAlign = 'center';
+          ctx.fillText('[ SPACE AUTONOMY // BENGALURU & STARBASE TELEMETRY ]', W / 2, H / 2 + 140);
+          ctx.restore();
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ACT 5: 20.0s - 25.0s ("PLANETARY COMPUTE." -> "STARLINK REAL-TIME MESH.")
+    // ========================================================
+    function renderAct5(ctx, t) {
+      const localT = t - 20.0;
+      const fadeIn = clamp(localT / 0.5);
+      const fadeOut = localT > 4.4 ? 1 - (localT - 4.4) / 0.6 : 1;
+      ctx.save();
+      ctx.globalAlpha = fadeIn * fadeOut;
+
+      // Constellation Orbital Laser Grid Animation
+      const numNodes = 12;
+      const nodes = [];
+      for (let i = 0; i < numNodes; i++) {
+        const angle = (i / numNodes) * Math.PI * 2 + localT * 0.15;
+        const radiusX = 680 + Math.sin(i * 3 + localT) * 40;
+        const radiusY = 220 + Math.cos(i * 2 + localT) * 30;
+        nodes.push({
+          x: W / 2 + Math.cos(angle) * radiusX,
+          y: H * 0.72 + Math.sin(angle) * radiusY
+        });
+      }
+
+      // Draw Laser Links between Starlink Satellites
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < nodes.length; i++) {
+        const next = nodes[(i + 1) % nodes.length];
+        ctx.beginPath();
+        ctx.moveTo(nodes[i].x, nodes[i].y);
+        ctx.lineTo(next.x, next.y);
+        ctx.stroke();
+
+        // Node Glow Dot
+        ctx.fillStyle = '#00E5FF';
+        ctx.beginPath();
+        ctx.arc(nodes[i].x, nodes[i].y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // Top Header Tag
+      ctx.font = '700 16px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#00E5FF';
+      ctx.textAlign = 'center';
+      ctx.fillText('[ LOW EARTH ORBIT MESH ARCHITECTURE // GLOBAL BACKBONE ]', W / 2, 210);
+
+      if (localT < 2.5) {
+        // Line 1: PLANETARY COMPUTE.
+        renderKineticPhrase(ctx, {
+          words: ['PLANETARY', 'COMPUTE.'],
+          startTimes: [20.4, 21.1],
+          t,
+          x: W / 2,
+          y: H / 2 - 30,
+          fontSize: 135,
+          colors: ['#F0F2F5', '#FFA000']
+        });
+
+        if (localT > 1.5) {
+          ctx.save();
+          ctx.font = '600 20px "JetBrains Mono", monospace';
+          ctx.fillStyle = 'rgba(240, 242, 245, 0.65)';
+          ctx.textAlign = 'center';
+          ctx.fillText('DISTRIBUTED INFERENCE AT ZERO ATMOSPHERIC LATENCY', W / 2, H / 2 + 55);
+          ctx.restore();
+        }
+      } else {
+        // Line 2: STARLINK REAL-TIME MESH.
+        renderKineticPhrase(ctx, {
+          words: ['STARLINK', 'REAL-TIME', 'MESH.'],
+          startTimes: [22.6, 23.1, 23.7],
+          t,
+          x: W / 2,
+          y: H / 2 - 30,
+          fontSize: 125,
+          colors: ['#00E5FF', '#F0F2F5', '#FF9933']
+        });
+
+        if (localT > 3.9) {
+          ctx.save();
+          ctx.font = '700 20px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#FFA000';
+          ctx.textAlign = 'center';
+          ctx.fillText('100 GBPS OPTICAL INTER-SATELLITE CROSSLINKS ACTIVE', W / 2, H / 2 + 55);
+          ctx.restore();
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // ACT 6: 25.0s - 30.0s (Sovereign Climax: SPACEX // GROK 3 INDIA)
+    // ========================================================
+    function renderAct6(ctx, t) {
+      const localT = t - 25.0;
+      const fadeIn = clamp(localT / 0.4);
+      ctx.save();
+      ctx.globalAlpha = fadeIn;
+
+      // Massive LOX Amber Flame Exhaust Particles Rising from Center Bottom
+      ctx.save();
+      const flameOriginX = W / 2;
+      const flameOriginY = H + 60;
+
+      for (let i = 0; i < NUM_THRUST_PARTICLES; i++) {
+        const p = THRUST_PARTICLES[i];
+        // Calculate particle position based on localT
+        const age = (localT * p.baseSpeed * 0.001 + p.seed * 0.05) % p.life;
+        const normAge = age / p.life; // 0 (start) to 1 (top dissipate)
+
+        const px = flameOriginX + p.baseX * (0.3 + normAge * 1.4);
+        const py = flameOriginY - normAge * (H * 0.95);
+        const pRadius = p.size * (1 - normAge * 0.7);
+
+        const particleColor = p.colorIndex === 0
+          ? `rgba(255, 107, 0, ${(1 - normAge) * 0.85})`
+          : `rgba(255, 160, 0, ${(1 - normAge) * 0.9})`;
+
+        ctx.fillStyle = particleColor;
+        ctx.beginPath();
+        ctx.arc(px, py, pRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Center Flame Core Flare
+      const coreGrad = ctx.createRadialGradient(W / 2, H, 50, W / 2, H, 650);
+      coreGrad.addColorStop(0, 'rgba(255, 160, 0, 0.45)');
+      coreGrad.addColorStop(0.4, 'rgba(255, 107, 0, 0.18)');
+      coreGrad.addColorStop(1, 'rgba(8, 9, 12, 0)');
+      ctx.fillStyle = coreGrad;
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+
+      // Framing Aerospace Hairlines & Corner Brackets
+      drawCornerBrackets(ctx, 160, 180, W - 320, H - 340, 36, 'rgba(255, 160, 0, 0.65)', 2);
+
+      // Sovereign Master Lockup: SPACEX // GROK 3 INDIA.
+      renderKineticPhrase(ctx, {
+        words: ['SPACEX', '//', 'GROK 3', 'INDIA.'],
+        startTimes: [25.4, 25.8, 26.3, 26.9],
+        t,
+        x: W / 2,
+        y: H / 2 - 20,
+        fontSize: 130,
+        colors: ['#F0F2F5', '#FF6B00', '#00E5FF', '#FF9933'],
+        scaleOvershoot: 1.4
+      });
+
+      // Bottom Sovereign Sub-lockup
+      if (localT > 2.2) {
+        const subAlpha = clamp((localT - 2.2) / 0.4);
+        ctx.save();
+        ctx.globalAlpha = subAlpha;
+        ctx.font = '700 24px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#FFA000';
+        ctx.textAlign = 'center';
+        ctx.fillText('AUTONOMOUS ORBITAL HORIZON 2026 // BUILD WITH CALEB', W / 2, H / 2 + 90);
+
+        ctx.font = '600 15px "JetBrains Mono", monospace';
+        ctx.fillStyle = 'rgba(240, 242, 245, 0.6)';
+        ctx.fillText('STARBASE TEXAS • BENGALURU AEROSPACE CORRIDOR • LEO REAL-TIME MESH', W / 2, H / 2 + 135);
+        ctx.restore();
+      }
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // MASTER DETERMINISTIC FRAME RENDERER: window.__renderFrameAt(t)
+    // ========================================================
+    window.__renderFrameAt = function(timeSeconds) {
+      const t = clamp(timeSeconds, 0, TOTAL_DURATION);
+
+      // 1. Clear with Carbon Fiber Obsidian background
+      ctx.fillStyle = '#08090C';
+      ctx.fillRect(0, 0, W, H);
+
+      // 2. Render Subtle Deep Space Grid Lines
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
+      ctx.lineWidth = 1;
+      const gridSize = 120;
+      for (let x = 0; x <= W; x += gridSize) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      for (let y = 0; y <= H; y += gridSize) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+
+      // 3. Render Stars & Space Dust
+      STARS.forEach((s) => {
+        ctx.fillStyle = `rgba(240, 242, 245, ${s.alpha})`;
+        ctx.beginPath();
+        ctx.arc(s.x, (s.y + t * s.speed * 8) % H, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+
+      // 4. Render Current Act
+      if (t < 5.0) {
+        renderAct1(ctx, t);
+      } else if (t < 10.0) {
+        renderAct2(ctx, t);
+      } else if (t < 15.0) {
+        renderAct3(ctx, t);
+      } else if (t < 20.0) {
+        renderAct4(ctx, t);
+      } else if (t < 25.0) {
+        renderAct5(ctx, t);
+      } else {
+        renderAct6(ctx, t);
+      }
+
+      // 5. Clean Top Aerospace Bar (No debug text)
+      drawCleanTopBar(ctx, t);
+    };
+
+    // ========================================================
+    // INTERACTIVE PREVIEW CONTROLS & TIMELINE LOOP
+    // ========================================================
+    let currentTime = 0;
+    let isPlaying = false;
+    let lastPerfTime = 0;
+
+    function formatTime(s) {
+      const mins = Math.floor(s / 60);
+      const secs = Math.floor(s % 60);
+      const hundredths = Math.floor((s % 1) * 100);
+      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(hundredths).padStart(2, '0')}`;
+    }
+
+    function updateUI(t) {
+      slider.value = t;
+      timeLabel.textContent = formatTime(t);
+      window.__renderFrameAt(t);
+    }
+
+    function animate(now) {
+      if (isPlaying) {
+        if (!lastPerfTime) lastPerfTime = now;
+        const delta = (now - lastPerfTime) / 1000;
+        lastPerfTime = now;
+
+        currentTime += delta;
+        if (currentTime > TOTAL_DURATION) {
+          currentTime = 0; // loop
+        }
+        updateUI(currentTime);
+      }
+      requestAnimationFrame(animate);
+    }
+
+    btnPlay.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      btnPlay.textContent = isPlaying ? 'PAUSE' : 'PLAY';
+      btnPlay.style.background = isPlaying ? '#FFA000' : '#FF6B00';
+      lastPerfTime = performance.now();
+    });
+
+    slider.addEventListener('input', (e) => {
+      currentTime = parseFloat(e.target.value);
+      updateUI(currentTime);
+    });
+
+    document.querySelectorAll('.jump-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentTime = parseFloat(btn.dataset.time);
+        updateUI(currentTime);
+      });
+    });
+
+    // Initial Frame Render
+    document.fonts.ready.then(() => {
+      updateUI(0);
+      requestAnimationFrame(animate);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>The Artifact Engine — Claude-Grade Light-Mode Motion Graphics (15s @ 60fps)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #EFECE6;
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      color: #141413;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #stage-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      box-shadow: 0 40px 120px rgba(45, 35, 25, 0.15);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    canvas#motion-stage {
+      display: block;
+      width: 1920px;
+      height: 1080px;
+      background: #FAF8F5;
+    }
+
+    /* Claude-Grade Floating Control Pill */
+    #playback-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(20px);
+      border: 1px solid #E8E6DC;
+      border-radius: 9999px;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      z-index: 1000;
+      box-shadow: 0 12px 36px rgba(20, 20, 19, 0.08);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+
+    button.ctrl-btn {
+      background: #D97757;
+      color: #FFFFFF;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 12px;
+      transition: transform 0.1s, background-color 0.1s;
+    }
+    button.ctrl-btn:hover { background: #CC6B49; }
+    button.ctrl-btn:active { transform: scale(0.96); }
+
+    .jump-btn {
+      background: #F5F2EB;
+      color: #141413;
+      border: 1px solid #E8E6DC;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .jump-btn:hover { background: #EFECE6; }
+
+    input[type=range] {
+      width: 260px;
+      accent-color: #D97757;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <canvas id="motion-stage" width="1920" height="1080"></canvas>
+  </div>
+
+  <div id="playback-bar">
+    <button class="ctrl-btn" id="play-pause-btn">▶ PLAY</button>
+    <input type="range" id="time-slider" min="0" max="15" step="0.0166" value="0">
+    <span id="timecode-display" style="min-width: 90px; color: #D97757; font-weight: 700;">00:00.00</span>
+    <button class="jump-btn" data-time="0.0">PROVOCATION</button>
+    <button class="jump-btn" data-time="1.8">CODE SPLIT</button>
+    <button class="jump-btn" data-time="4.2">BENTO</button>
+    <button class="jump-btn" data-time="7.2">52X ROCKET</button>
+    <button class="jump-btn" data-time="9.8">RESPONSIVE</button>
+    <button class="jump-btn" data-time="12.0">STROBE</button>
+    <button class="jump-btn" data-time="13.8">LOCKUP</button>
+    <span style="color: #9E9D95; font-size: 11px;">15s @ 60FPS</span>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('motion-stage');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const W = 1920, H = 1080;
+
+    function resizeStage() {
+      const container = document.getElementById('stage-container');
+      const scale = Math.min((window.innerWidth - 48) / W, (window.innerHeight - 120) / H, 1);
+      container.style.transform = `scale(${scale})`;
+    }
+    window.addEventListener('resize', resizeStage);
+    resizeStage();
+
+    // ========================================================
+    // MATHEMATICAL EASINGS & RUNGE-KUTTA DYNAMICS
+    // ========================================================
+    const clamp = (v, min = 0, max = 1) => Math.max(min, Math.min(max, v));
+    const norm = (v, a, b) => clamp((v - a) / (b - a));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    // 80/20 Velocity Easing: Fast-In, Crisp-Settle
+    const easeOutExpo = (x) => (x === 1 ? 1 : 1 - Math.pow(2, -10 * clamp(x)));
+    const easeOutQuart = (x) => 1 - Math.pow(1 - clamp(x), 4);
+    const easeInOutCubic = (x) => {
+      const c = clamp(x);
+      return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+    };
+
+    // Analytical Damped Harmonic Spring
+    const spring = (x, omega = 15.0, zeta = 0.68) => {
+      const c = clamp(x);
+      if (c <= 0) return 0;
+      if (c >= 1) return 1;
+      const decay = Math.exp(-zeta * omega * c);
+      const omegaD = omega * Math.sqrt(Math.max(0, 1 - zeta * zeta));
+      return 1 - decay * (Math.cos(omegaD * c) + (zeta * omega / omegaD) * Math.sin(omegaD * c));
+    };
+
+    // Volume-Preserving Squash & Stretch (scaleX * scaleY === 1.0)
+    function calcSquashStretch(velocity, maxVel = 2200, maxDeform = 0.28) {
+      const normV = Math.min(Math.abs(velocity) / maxVel, 1.0);
+      const stretch = 1.0 + normV * maxDeform;
+      const squash = 1.0 / stretch;
+      return { stretch, squash };
+    }
+
+    // Pseudo-Random PRNG
+    function prng(seed) {
+      let s = (seed += 0x6d2b79f5);
+      s = Math.imul(s ^ (s >>> 15), s | 1);
+      s ^= s + Math.imul(s ^ (s >>> 7), s | 61);
+      return ((s ^ (s >>> 14)) >>> 0) / 4294967296;
+    }
+
+    // Rounded Rectangle Helper
+    function roundRect(ctx, x, y, w, h, r) {
+      const rad = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + rad, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rad);
+      ctx.arcTo(x + w, y + h, x, y + h, rad);
+      ctx.arcTo(x, y + h, x, y, rad);
+      ctx.arcTo(x, y, x + w, y, rad);
+      ctx.closePath();
+    }
+
+    // ========================================================
+    // ZERO-CPU-BLUR 9-SLICE LIGHT-MODE SHADOW STAMP BAKER
+    // ========================================================
+    class LightModeShadowBaker {
+      constructor(radius = 24, maxBlur = 48, maxOffsetY = 24) {
+        this.radius = radius;
+        this.padding = maxBlur * 1.4 + maxOffsetY;
+        this.coreSize = radius * 2 + 32;
+        this.stampSize = this.coreSize + this.padding * 2;
+
+        this.canvas = document.createElement('canvas');
+        this.canvas.width = this.stampSize;
+        this.canvas.height = this.stampSize;
+        this.ctx = this.canvas.getContext('2d');
+        this.bake();
+      }
+
+      bake() {
+        const ctx = this.ctx;
+        const p = this.padding;
+        const s = this.coreSize;
+        const r = this.radius;
+
+        // 3-tier warm ambient occlusion drop shadow profile
+        const tiers = [
+          { offsetY: 2,  blur: 6,  color: 'rgba(45, 35, 25, 0.08)' }, // Contact AO
+          { offsetY: 12, blur: 24, color: 'rgba(45, 35, 25, 0.05)' }, // Key Light
+          { offsetY: 28, blur: 54, color: 'rgba(45, 35, 25, 0.035)' } // Penumbra
+        ];
+
+        tiers.forEach(t => {
+          ctx.save();
+          ctx.shadowColor = t.color;
+          ctx.shadowBlur = t.blur;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = t.offsetY;
+          ctx.fillStyle = '#000000';
+          roundRect(ctx, p, p, s, s, r);
+          ctx.fill();
+          ctx.restore();
+        });
+
+        // Clear interior to leave only drop shadow perimeter
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        roundRect(ctx, p, p, s, s, r);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      drawShadow(targetCtx, x, y, width, height, alpha = 1.0) {
+        if (alpha <= 0.001) return;
+        targetCtx.save();
+        targetCtx.globalAlpha *= alpha;
+
+        const p = this.padding;
+        const s = this.coreSize;
+        const r = this.radius;
+        const corner = p + r;
+
+        const sx0 = 0, sx1 = p + r, sx2 = this.stampSize - (p + r);
+        const sw0 = corner, sw1 = s - 2 * r, sw2 = corner;
+        const sy0 = 0, sy1 = p + r, sy2 = this.stampSize - (p + r);
+        const sh0 = corner, sh1 = s - 2 * r, sh2 = corner;
+
+        const dx0 = x - p, dx1 = x + r, dx2 = x + width - r;
+        const dw0 = corner, dw1 = Math.max(0, width - 2 * r), dw2 = corner;
+        const dy0 = y - p, dy1 = y + r, dy2 = y + height - r;
+        const dh0 = corner, dh1 = Math.max(0, height - 2 * r), dh2 = corner;
+
+        // 4 Corners
+        targetCtx.drawImage(this.canvas, sx0, sy0, sw0, sh0, dx0, dy0, dw0, dh0);
+        targetCtx.drawImage(this.canvas, sx2, sy0, sw2, sh0, dx2, dy0, dw2, dh0);
+        targetCtx.drawImage(this.canvas, sx0, sy2, sw0, sh2, dx0, dy2, dw0, dh2);
+        targetCtx.drawImage(this.canvas, sx2, sy2, sw2, sh2, dx2, dy2, dw2, dh2);
+
+        // 4 Edges
+        if (dw1 > 0) {
+          targetCtx.drawImage(this.canvas, sx1, sy0, sw1, sh0, dx1, dy0, dw1, dh0);
+          targetCtx.drawImage(this.canvas, sx1, sy2, sw1, sh2, dx1, dy2, dw1, dh2);
+        }
+        if (dh1 > 0) {
+          targetCtx.drawImage(this.canvas, sx0, sy1, sw0, sh1, dx0, dy1, dw0, dh1);
+          targetCtx.drawImage(this.canvas, sx2, sy1, sw2, sh1, dx2, dy1, dw2, dh1);
+        }
+        targetCtx.restore();
+      }
+    }
+
+    const shadowBaker = new LightModeShadowBaker(20);
+
+    // 3D Isometric / Oblique Projection Helper
+    function project3D(x, y, z, rotX, rotY, fov = 900) {
+      const rx = rotX * Math.PI / 180;
+      const ry = rotY * Math.PI / 180;
+      const x1 = x * Math.cos(ry) + z * Math.sin(ry);
+      const z1 = -x * Math.sin(ry) + z * Math.cos(ry);
+      const y2 = y * Math.cos(rx) - z1 * Math.sin(rx);
+      const z2 = y * Math.sin(rx) + z1 * Math.cos(rx);
+      const scale = fov / (fov + z2);
+      return { x: W / 2 + x1 * scale, y: H / 2 + y2 * scale, scale };
+    }
+
+    // ========================================================
+    // ARCHITECTURAL LITHOGRAPHIC GRID & CLAUDE TELEMETRY
+    // ========================================================
+    function drawClaudePaperUnderlay(ctx, t) {
+      // 1. Warm Cotton Paper Ground
+      ctx.fillStyle = '#FAF8F5';
+      ctx.fillRect(0, 0, W, H);
+
+      // 2. Subtle Lithographic Hairline Grid (96px step)
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = '#EFECE6';
+      const step = 96;
+      ctx.beginPath();
+      for (let x = 0.5; x <= W; x += step) {
+        ctx.moveTo(x, 0); ctx.lineTo(x, H);
+      }
+      for (let y = 0.5; y <= H; y += step) {
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+      }
+      ctx.stroke();
+
+      // Precision Corner Registration Ticks (+) in Terracotta
+      ctx.strokeStyle = '#D97757';
+      ctx.lineWidth = 1.5;
+      const crosses = [
+        [96.5, 96.5], [W - 96.5, 96.5],
+        [96.5, H - 96.5], [W - 96.5, H - 96.5]
+      ];
+      ctx.beginPath();
+      crosses.forEach(([cx, cy]) => {
+        ctx.moveTo(cx - 6, cy); ctx.lineTo(cx + 6, cy);
+        ctx.moveTo(cx, cy - 6); ctx.lineTo(cx, cy + 6);
+      });
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // Header & Telemetry Bar
+    function drawClaudeHeaderHUD(ctx, t) {
+      ctx.save();
+      const frames = Math.floor(t * 60);
+
+      // Top Left: Monograph Issue Tag & Status
+      ctx.font = '700 12px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#D97757';
+      ctx.fillText('CLAUDE // ARTIFACT ENGINE', 96, 68);
+
+      ctx.fillStyle = '#5C5B56';
+      ctx.font = '500 12px "JetBrains Mono", monospace';
+      ctx.fillText(`SPECIMEN 2026.04 • 60 FPS • SEED: ${(t * 100).toFixed(0)}`, 320, 68);
+
+      // Top Right: Live Running Timecode & Pulsing Terracotta Pip
+      const s = Math.floor(t);
+      const ms = Math.floor((t - s) * 100);
+      const tc = `00:${String(s).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+
+      ctx.textAlign = 'right';
+      ctx.font = '700 12px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#141413';
+      ctx.fillText(`FRAME ${String(frames).padStart(4, '0')} / 0900 [${tc}]`, W - 116, 68);
+
+      // Pulsing Terracotta Pip
+      const pulse = 0.6 + 0.4 * Math.sin(t * Math.PI * 4);
+      ctx.fillStyle = '#D97757';
+      ctx.globalAlpha = pulse;
+      ctx.beginPath();
+      ctx.arc(W - 96, 64, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // MASTER DETERMINISTIC RENDER FUNCTION (15.00s @ 60FPS)
+    // ========================================================
+    window.__renderFrameAt = function(t) {
+      t = clamp(t, 0, 15.0);
+
+      // 1. Render Warm Paper Background & Grid
+      drawClaudePaperUnderlay(ctx, t);
+
+      // ========================================================
+      // SCENE 1: THE PROVOCATION (0.00s – 1.80s)
+      // Rapid crash zoom into editorial card: "STOP EDITING TIMELINES."
+      // ========================================================
+      if (t < 1.80) {
+        const p = norm(t, 0.0, 1.80);
+        const enterP = easeOutExpo(norm(t, 0.0, 0.55));
+        const strikeP = easeOutQuart(norm(t, 0.55, 1.15));
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+
+        // Dynamic 3D tilt & scale
+        const scale = lerp(0.82, 1.02, enterP);
+        ctx.scale(scale, scale);
+
+        // Card container
+        const cardW = 1100, cardH = 460;
+        shadowBaker.drawShadow(ctx, -cardW / 2, -cardH / 2, cardW, cardH, 1.0);
+
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, -cardW / 2, -cardH / 2, cardW, cardH, 24);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Card Category Pill
+        ctx.fillStyle = '#FDF3EE';
+        roundRect(ctx, -cardW / 2 + 54, -cardH / 2 + 48, 190, 32, 16);
+        ctx.fill();
+        ctx.fillStyle = '#D97757';
+        ctx.font = '700 12px "JetBrains Mono", monospace';
+        ctx.fillText('PARADIGM DEPRECATED', -cardW / 2 + 72, -cardH / 2 + 69);
+
+        // Monumental Headline: "Stop scrubbing timelines."
+        ctx.font = '600 84px "Instrument Serif", Georgia, serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.fillText('Stop scrubbing timelines.', 0, -30);
+
+        // Terracotta Strike-Through Rule
+        if (strikeP > 0) {
+          const ruleW = 860 * strikeP;
+          ctx.fillStyle = '#D97757';
+          ctx.fillRect(-430, -52, ruleW, 6);
+        }
+
+        // Subtext: "Start compiling motion as pure code."
+        const subAlpha = easeOutExpo(norm(t, 0.8, 1.5));
+        ctx.save();
+        ctx.globalAlpha = subAlpha;
+        ctx.font = '700 32px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#5C5B56';
+        ctx.fillText('Start compiling motion as pure code.', 0, 55);
+
+        ctx.font = '600 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#D97757';
+        ctx.fillText('ZERO KEYFRAME BLOAT • 100% REPRODUCIBLE DOM', 0, 110);
+        ctx.restore();
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // SCENE 2: THE SURGICAL SPLIT (1.80s – 4.20s)
+      // Left: TypeScript / Right: Live 3D Vector Component
+      // ========================================================
+      else if (t >= 1.80 && t < 4.20) {
+        const p = norm(t, 1.80, 4.20);
+        const splitEnter = easeOutExpo(norm(t, 1.80, 2.40));
+
+        ctx.save();
+
+        // Screen-wide Headline
+        ctx.font = '600 48px "Instrument Serif", Georgia, serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.fillText('Code on the left. Native motion on the right.', W / 2, 140);
+
+        const leftW = 820, rightW = 820, h = 640;
+        const leftX = lerp(-600, 100, splitEnter);
+        const rightX = lerp(W + 600, 1000, splitEnter);
+        const y = 200;
+
+        // LEFT CARD: Typewriter TypeScript Editor
+        shadowBaker.drawShadow(ctx, leftX, y, leftW, h, 1.0);
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, leftX, y, leftW, h, 20);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Editor Header Bar
+        ctx.fillStyle = '#F5F2EB';
+        ctx.beginPath();
+        roundRect(ctx, leftX, y, leftW, 46, 20);
+        ctx.fill();
+        ctx.fillRect(leftX, y + 26, leftW, 20);
+
+        // macOS Window dots
+        ['#FF5F56', '#FFBD2E', '#27C93F'].forEach((col, idx) => {
+          ctx.beginPath();
+          ctx.arc(leftX + 28 + idx * 18, y + 23, 5, 0, Math.PI * 2);
+          ctx.fillStyle = col;
+          ctx.fill();
+        });
+
+        ctx.fillStyle = '#141413';
+        ctx.font = '700 13px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('motion-contract.tsx', leftX + 96, y + 28);
+
+        ctx.fillStyle = '#D97757';
+        ctx.font = '600 11px "JetBrains Mono", monospace';
+        ctx.fillText('TYPESCRIPT 5.6', leftX + leftW - 130, y + 28);
+
+        // TypeScript Code Lines Stream
+        const codeLines = [
+          { num: '01', text: 'export const ClaudeMotion = () => {', col: '#141413' },
+          { num: '02', text: '  const time = useTimeStream();', col: '#5C5B56' },
+          { num: '03', text: '  const matrix = calculateGyro3D(time);', col: '#D97757' },
+          { num: '04', text: '  return (', col: '#141413' },
+          { num: '05', text: '    <Stage canvas="warm-ivory" fps={60}>', col: '#788C5D' },
+          { num: '06', text: '      <Card shadow="3-tier" border="hairline">', col: '#D97757' },
+          { num: '07', text: '        <VectorGyro rotation={matrix.deg} />', col: '#D97757' },
+          { num: '08', text: '        <Benchmark metric="1.4ms" />', col: '#788C5D' },
+          { num: '09', text: '      </Card>', col: '#D97757' },
+          { num: '10', text: '    </Stage>', col: '#788C5D' },
+          { num: '11', text: '  );', col: '#141413' },
+          { num: '12', text: '};', col: '#141413' }
+        ];
+
+        codeLines.forEach((l, idx) => {
+          const lY = y + 84 + idx * 38;
+          ctx.fillStyle = '#9E9D95';
+          ctx.font = '500 14px "JetBrains Mono", monospace';
+          ctx.fillText(l.num, leftX + 28, lY);
+
+          ctx.fillStyle = l.col;
+          ctx.font = '600 16px "JetBrains Mono", monospace';
+          ctx.fillText(l.text, leftX + 72, lY);
+        });
+
+        // Blinking Cursor
+        if (Math.floor(t * 4) % 2 === 0) {
+          ctx.fillStyle = '#D97757';
+          ctx.fillRect(leftX + 260, y + 84 + 11 * 38 - 14, 10, 18);
+        }
+
+        // RIGHT CARD: Live Interactive Rendered Artifact Preview
+        shadowBaker.drawShadow(ctx, rightX, y, rightW, h, 1.0);
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, rightX, y, rightW, h, 20);
+        ctx.fill();
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Right Header
+        ctx.fillStyle = '#FDF3EE';
+        ctx.fillRect(rightX + 1, y + 1, rightW - 2, 46);
+        ctx.fillStyle = '#D97757';
+        ctx.font = '700 13px "JetBrains Mono", monospace';
+        ctx.fillText('LIVE ARTIFACT PREVIEW [60 FPS]', rightX + 28, y + 28);
+
+        ctx.fillStyle = '#788C5D';
+        ctx.fillText('● DETERMINISTIC', rightX + rightW - 140, y + 28);
+
+        // Center Rotating 3D Gyroscope (Driven by code!)
+        const gyroCX = rightX + rightW / 2;
+        const gyroCY = y + h / 2 + 10;
+        const rotSpeed = t * 75;
+
+        for (let ring = 1; ring <= 3; ring++) {
+          const radius = ring * 65;
+          ctx.save();
+          ctx.translate(gyroCX, gyroCY);
+          ctx.rotate(rotSpeed * (ring * 0.4) * Math.PI / 180);
+          ctx.scale(1, Math.cos(t * ring * 1.5));
+          ctx.strokeStyle = ring === 2 ? '#D97757' : '#2E2C29';
+          ctx.lineWidth = ring === 2 ? 2.5 : 1.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Satellite tracking dots
+          for (let dot = 0; dot < 4; dot++) {
+            const angle = dot * (Math.PI / 2);
+            ctx.fillStyle = '#D97757';
+            ctx.beginPath();
+            ctx.arc(Math.cos(angle) * radius, Math.sin(angle) * radius, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        // Real-Time Metric Pill Below Gyro
+        ctx.fillStyle = '#F5F2EB';
+        roundRect(ctx, rightX + 60, y + h - 80, rightW - 120, 48, 12);
+        ctx.fill();
+        ctx.fillStyle = '#141413';
+        ctx.font = '700 14px "JetBrains Mono", monospace';
+        ctx.fillText(`FRAME: ${Math.floor(t * 60)}  •  LATENCY: 0.82ms  •  ACCEL: ${(Math.sin(t * 8) * 4).toFixed(2)}G`, rightX + 85, y + h - 50);
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // SCENE 3: TACTILE BENTO CASCADE (4.20s – 7.20s)
+      // 4 High-Speed Bento Cards Tumbling into Place with Springs
+      // ========================================================
+      else if (t >= 4.20 && t < 7.20) {
+        const p = norm(t, 4.20, 7.20);
+        ctx.save();
+
+        ctx.font = '600 52px "Instrument Serif", Georgia, serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.fillText('High movement. Zero AI slop.', W / 2, 150);
+
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#D97757';
+        ctx.fillText('FOUR PILLARS OF DETERMINISTIC MOTION ARCHITECTURE', W / 2, 195);
+
+        // 4 Bento Cards
+        const bento = [
+          { title: 'AUDIO FREQUENCY', stat: '140 BPM', tag: 'PCM_SYNTH', val: 'FRAME_LOCKED' },
+          { title: 'PLAYWRIGHT CLUSTER', stat: '4 WORKERS', tag: 'HEADLESS_CHROME', val: 'PARALLEL_RASTER' },
+          { title: 'FRAME ACCURACY', stat: '60.000 FPS', tag: 'ZERO_JITTER', val: '450 / 450' },
+          { title: 'BUNDLE EFFICIENCY', stat: '14.2 KB', tag: 'VS 4.8 GB .AEP', val: 'PURE_TYPESCRIPT' }
+        ];
+
+        const cardW = 390, cardH = 480;
+        bento.forEach((b, idx) => {
+          const cardP = spring(norm(t, 4.30 + idx * 0.14, 5.50 + idx * 0.14), 16, 0.65);
+          const cx = 110 + idx * 435;
+          const cy = lerp(H + 200, 260, cardP);
+
+          ctx.save();
+          ctx.translate(cx, cy);
+
+          shadowBaker.drawShadow(ctx, 0, 0, cardW, cardH, 1.0);
+          ctx.fillStyle = '#FFFFFF';
+          roundRect(ctx, 0, 0, cardW, cardH, 20);
+          ctx.fill();
+          ctx.strokeStyle = idx === 1 || idx === 3 ? '#D97757' : '#E8E6DC';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          // Card Tag Pill
+          ctx.fillStyle = '#F5F2EB';
+          roundRect(ctx, 28, 32, 160, 28, 14);
+          ctx.fill();
+          ctx.fillStyle = '#D97757';
+          ctx.font = '700 11px "JetBrains Mono", monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(`[ ${b.tag} ]`, 42, 50);
+
+          // Card Title
+          ctx.fillStyle = '#5C5B56';
+          ctx.font = '700 14px "JetBrains Mono", monospace';
+          ctx.fillText(b.title, 28, 105);
+
+          // Big Stat
+          ctx.fillStyle = '#141413';
+          ctx.font = '800 48px "Plus Jakarta Sans", sans-serif';
+          ctx.fillText(b.stat, 28, 170);
+
+          // Dynamic Animated Sparkline / Bars Inside Card
+          ctx.strokeStyle = '#D97757';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          for (let k = 0; k <= 10; k++) {
+            const bx = 28 + (k / 10) * (cardW - 56);
+            const by = 280 + Math.sin(t * 8 + k * 0.8 + idx) * 35;
+            if (k === 0) ctx.moveTo(bx, by);
+            else ctx.lineTo(bx, by);
+          }
+          ctx.stroke();
+
+          // Card Footer
+          ctx.fillStyle = '#788C5D';
+          ctx.font = '700 13px "JetBrains Mono", monospace';
+          ctx.fillText(`● ${b.val}`, 28, cardH - 36);
+
+          ctx.restore();
+        });
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // SCENE 4: THE 52X BENCHMARK ROCKET RACE (7.20s – 9.80s)
+      // Animated Coordinate Curve: Legacy AE Crawls vs Artifact Rockets!
+      // ========================================================
+      else if (t >= 7.20 && t < 9.80) {
+        const p = norm(t, 7.20, 9.80);
+        const curveP = easeOutExpo(norm(t, 7.20, 8.80));
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+
+        // Benchmark Card Container
+        const bw = 1400, bh = 660;
+        shadowBaker.drawShadow(ctx, -bw / 2, -bh / 2, bw, bh, 1.0);
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, -bw / 2, -bh / 2, bw, bh, 24);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Headline Inside Card
+        ctx.fillStyle = '#141413';
+        ctx.font = '600 56px "Instrument Serif", Georgia, serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('52× Faster Execution.', -bw / 2 + 60, -bh / 2 + 80);
+
+        ctx.font = '600 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#D97757';
+        ctx.fillText('HEADLESS CLUSTER RENDER LATENCY (LOWER IS BETTER)', -bw / 2 + 60, -bh / 2 + 120);
+
+        // Chart Axes
+        const chartX = -bw / 2 + 80;
+        const chartY = bh / 2 - 80;
+        const chartW = bw - 160;
+        const chartH = 340;
+
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(chartX, chartY - chartH);
+        ctx.lineTo(chartX, chartY);
+        ctx.lineTo(chartX + chartW, chartY);
+        ctx.stroke();
+
+        // Gridlines
+        ctx.strokeStyle = '#F5F2EB';
+        for (let gy = 1; gy <= 4; gy++) {
+          const ly = chartY - (gy / 4) * chartH;
+          ctx.beginPath();
+          ctx.moveTo(chartX, ly); ctx.lineTo(chartX + chartW, ly);
+          ctx.stroke();
+        }
+
+        // 1. Slow Legacy After Effects Line (Crawling slow)
+        ctx.strokeStyle = '#9E9D95';
+        ctx.setLineDash([8, 6]);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(chartX, chartY - 20);
+        ctx.lineTo(chartX + chartW * Math.min(0.35, p), chartY - chartH * 0.85);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.font = '700 13px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#5C5B56';
+        ctx.fillText('AFTER EFFECTS: 168.0s RENDER [GPU CRASH PRONE]', chartX + chartW * 0.2, chartY - chartH * 0.88);
+
+        // 2. The Artifact Engine Rocket Line in Terracotta
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        const curRocketX = chartX + chartW * curveP;
+        const curRocketY = chartY - (curveP * 28);
+        ctx.moveTo(chartX, chartY);
+        ctx.lineTo(curRocketX, curRocketY);
+        ctx.stroke();
+
+        // Pulsing Terracotta Rocket Head
+        ctx.fillStyle = '#D97757';
+        ctx.beginPath();
+        ctx.arc(curRocketX, curRocketY, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.font = '800 22px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#D97757';
+        ctx.fillText('ARTIFACT ENGINE: 2.4s RENDER (52×)', curRocketX + 16, curRocketY + 6);
+
+        // Giant Stat Overlay on Top Right
+        ctx.textAlign = 'right';
+        ctx.font = '800 110px "Instrument Serif", Georgia, serif';
+        ctx.fillStyle = '#D97757';
+        ctx.fillText('52×', bw / 2 - 60, -bh / 2 + 130);
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // SCENE 5: RESPONSIVE FORM-FACTOR MORPH (9.80s – 12.00s)
+      // Dynamic Form Factor Transitions: 9:16 -> 1:1 -> 16:9
+      // ========================================================
+      else if (t >= 9.80 && t < 12.00) {
+        const p = norm(t, 9.80, 12.00);
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+
+        ctx.font = '600 48px "Instrument Serif", Georgia, serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.fillText('One codebase. Every aspect ratio.', 0, -360);
+
+        // Form Factor Interpolation
+        let morphW = 420, morphH = 740, label = '9:16 VERTICAL SHORTS';
+        if (t < 10.50) {
+          // 9:16
+          morphW = 420; morphH = 680; label = '9:16 VERTICAL (TIKTOK / REELS / SHORTS)';
+        } else if (t < 11.20) {
+          // Morph to 1:1
+          const mp = norm(t, 10.50, 10.80);
+          morphW = lerp(420, 620, easeOutExpo(mp));
+          morphH = lerp(680, 620, easeOutExpo(mp));
+          label = '1:1 SQUARE (INSTAGRAM / FEED)';
+        } else {
+          // Morph to 16:9
+          const mp = norm(t, 11.20, 11.60);
+          morphW = lerp(620, 1100, easeOutExpo(mp));
+          morphH = lerp(620, 620, easeOutExpo(mp));
+          label = '16:9 CINEMATIC (X / TWITTER / YOUTUBE)';
+        }
+
+        shadowBaker.drawShadow(ctx, -morphW / 2, -morphH / 2, morphW, morphH, 1.0);
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, -morphW / 2, -morphH / 2, morphW, morphH, 24);
+        ctx.fill();
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Inner Responsive Content
+        ctx.font = '700 14px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#D97757';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, 0, -morphH / 2 + 45);
+
+        ctx.font = '700 36px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#141413';
+        ctx.fillText('FLUID CONTAINER MESH', 0, 0);
+
+        ctx.font = '600 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#788C5D';
+        ctx.fillText('0 CSS BREAKPOINTS • AUTOMATIC ASPECT RATIO', 0, 48);
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // SCENE 6: TRIPLE WORD STROBE (12.00s – 13.80s)
+      // Rapid Strobe: "CODE." -> "COMPILE." -> "SHIP."
+      // ========================================================
+      else if (t >= 12.00 && t < 13.80) {
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+
+        if (t < 12.50) {
+          // Beat 1: CODE
+          ctx.font = '800 130px "Instrument Serif", Georgia, serif';
+          ctx.fillStyle = '#141413';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('CODE.', 0, 0);
+
+          ctx.font = '700 20px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#D97757';
+          ctx.fillText('NO TIMELINE SPAGHETTI', 0, 90);
+        } else if (t < 13.00) {
+          // Beat 2: COMPILE
+          ctx.font = '800 130px "Instrument Serif", Georgia, serif';
+          ctx.fillStyle = '#D97757';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('COMPILE.', 0, 0);
+
+          ctx.font = '700 20px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#141413';
+          ctx.fillText('HEADLESS PLAYWRIGHT CLUSTERS', 0, 90);
+        } else {
+          // Beat 3: SHIP
+          ctx.font = '800 140px "Instrument Serif", Georgia, serif';
+          ctx.fillStyle = '#141413';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('SHIP.', 0, 0);
+
+          ctx.font = '700 20px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#788C5D';
+          ctx.fillText('60FPS PURE FILM • ZERO SLOP', 0, 90);
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // SCENE 7: THE CLAUDE-GRADE LOCKUP & MANIFESTO (13.80s – 15.00s)
+      // Sovereign Anthropic Mark + Terminal CTA
+      // ========================================================
+      else {
+        const p = norm(t, 13.80, 15.00);
+        const lockupP = easeOutExpo(norm(t, 13.80, 14.40));
+
+        ctx.save();
+        ctx.translate(W / 2, H / 2);
+
+        // Embossed Linen Master Plaque
+        const mw = 1200, mh = 480;
+        shadowBaker.drawShadow(ctx, -mw / 2, -mh / 2, mw, mh, lockupP);
+
+        ctx.fillStyle = '#FFFFFF';
+        roundRect(ctx, -mw / 2, -mh / 2, mw, mh, 28);
+        ctx.fill();
+        ctx.strokeStyle = '#E8E6DC';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Brand Mark: Interlocking Angle Brackets + Infinity Loop
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 3.5;
+        ctx.beginPath();
+        ctx.arc(-22, -110, 20, Math.PI * 0.5, Math.PI * 1.5);
+        ctx.arc(22, -110, 20, Math.PI * 1.5, Math.PI * 0.5);
+        ctx.stroke();
+
+        // Master Title: THE ARTIFACT ENGINE
+        ctx.font = '600 72px "Instrument Serif", Georgia, serif';
+        ctx.fillStyle = '#141413';
+        ctx.textAlign = 'center';
+        ctx.fillText('THE ARTIFACT ENGINE', 0, -25);
+
+        // Manifesto Quote
+        ctx.font = '600 22px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = '#5C5B56';
+        ctx.fillText('The next generation of motion graphics isn’t rendered in a timeline.', 0, 30);
+        ctx.fillText('It’s compiled in pure code.', 0, 62);
+
+        // Terminal Prompt Pill
+        ctx.fillStyle = '#F5F2EB';
+        roundRect(ctx, -380, 110, 760, 56, 28);
+        ctx.fill();
+        ctx.strokeStyle = '#D97757';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.font = '700 17px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#141413';
+        ctx.fillText('$ npx artifact-engine@latest launch', 0, 144);
+
+        ctx.restore();
+      }
+
+      // Global Header HUD (Always on top)
+      drawClaudeHeaderHUD(ctx, t);
+    };
+
+    // ========================================================
+    // INTERACTIVE CONTROLLER (Browser Preview Mode)
+    // ========================================================
+    const slider = document.getElementById('time-slider');
+    const playPauseBtn = document.getElementById('play-pause-btn');
+    const timecodeDisplay = document.getElementById('timecode-display');
+    const jumpBtns = document.querySelectorAll('.jump-btn');
+
+    let currentTime = 0.0;
+    let isPlaying = false;
+    let lastAnimTime = performance.now();
+
+    function updateTime(t) {
+      currentTime = clamp(t, 0, 15.0);
+      slider.value = currentTime;
+      const s = Math.floor(currentTime);
+      const ms = Math.floor((currentTime - s) * 100);
+      timecodeDisplay.textContent = `${String(s).padStart(2, '0')}:${String(ms).padStart(2, '0')}s`;
+      window.__renderFrameAt(currentTime);
+    }
+
+    slider.addEventListener('input', (e) => {
+      isPlaying = false;
+      playPauseBtn.textContent = '▶ PLAY';
+      updateTime(parseFloat(e.target.value));
+    });
+
+    playPauseBtn.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      playPauseBtn.textContent = isPlaying ? '❚❚ PAUSE' : '▶ PLAY';
+      if (isPlaying && currentTime >= 15.0) currentTime = 0;
+      lastAnimTime = performance.now();
+    });
+
+    jumpBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        isPlaying = false;
+        playPauseBtn.textContent = '▶ PLAY';
+        updateTime(parseFloat(btn.dataset.time));
+      });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        playPauseBtn.click();
+      }
+    });
+
+    function animationLoop(now) {
+      if (isPlaying) {
+        const dt = (now - lastAnimTime) / 1000;
+        currentTime += dt;
+        if (currentTime > 15.0) {
+          currentTime = 0.0;
+        }
+        updateTime(currentTime);
+      }
+      lastAnimTime = now;
+      requestAnimationFrame(animationLoop);
+    }
+    requestAnimationFrame(animationLoop);
+
+    // Initial Paint
+    updateTime(0.0);
+  </script>
+</body>
+</html>

@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ChatGPT o3 — Frontier Reasoning Launch Reel (30s Kinetic Stage)</title>
+  <style>
+    @font-face {
+      font-family: 'AntonLocal';
+      src: url('../public/fonts/Anton-Regular.ttf') format('truetype');
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: 'InterLocal';
+      src: url('../public/fonts/InterVariable.woff2') format('woff2');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #070708;
+      font-family: 'Plus Jakarta Sans', 'InterLocal', -apple-system, sans-serif;
+      color: #ECECEC;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #stage-container {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      transform-origin: center center;
+      box-shadow: 0 40px 140px rgba(0, 0, 0, 0.95), 0 0 80px rgba(16, 163, 127, 0.08);
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    canvas#motion-stage {
+      display: block;
+      width: 1920px;
+      height: 1080px;
+      background: #0D0D0E;
+    }
+
+    /* Floating Scrub Bar */
+    #playback-bar {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(18, 18, 20, 0.92);
+      backdrop-filter: blur(24px);
+      border: 1.5px solid rgba(16, 163, 127, 0.4);
+      border-radius: 9999px;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      z-index: 1000;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 30px rgba(16, 163, 127, 0.15);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+    }
+
+    button.ctrl-btn {
+      background: #10A37F;
+      color: #FFFFFF;
+      border: none;
+      padding: 7px 18px;
+      border-radius: 9999px;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      transition: transform 0.1s, background-color 0.1s;
+    }
+    button.ctrl-btn:hover { background: #13B890; }
+    button.ctrl-btn:active { transform: scale(0.96); }
+
+    .jump-btn {
+      background: rgba(255, 255, 255, 0.06);
+      color: #ECECEC;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 5px 11px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .jump-btn:hover { background: rgba(16, 163, 127, 0.2); border-color: #10A37F; color: #1DD89E; }
+
+    input[type=range] {
+      width: 260px;
+      accent-color: #10A37F;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage-container">
+    <canvas id="motion-stage" width="1920" height="1080"></canvas>
+  </div>
+
+  <div id="playback-bar">
+    <button class="ctrl-btn" id="btn-play-toggle">PLAY / PAUSE</button>
+    <input type="range" id="time-slider" min="0" max="30.0" step="0.0333" value="0">
+    <span id="time-label" style="font-weight: 700; min-width: 90px; color: #1DD89E;">00:00.00</span>
+    <div style="display: flex; gap: 6px;">
+      <button class="jump-btn" data-time="0.0">1. THINK</button>
+      <button class="jump-btn" data-time="5.0">2. REASON</button>
+      <button class="jump-btn" data-time="10.0">3. ROSETTE</button>
+      <button class="jump-btn" data-time="15.0">4. OPERATOR</button>
+      <button class="jump-btn" data-time="20.0">5. FRONTIER</button>
+      <button class="jump-btn" data-time="25.0">6. LOCKUP</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('motion-stage');
+    const ctx = canvas.getContext('2d');
+    const container = document.getElementById('stage-container');
+    const slider = document.getElementById('time-slider');
+    const timeLabel = document.getElementById('time-label');
+    const btnPlay = document.getElementById('btn-play-toggle');
+
+    const W = 1920;
+    const H = 1080;
+    const TOTAL_DURATION = 30.0;
+
+    // Viewport Auto-Fit Scaling
+    function resizeStage() {
+      const availW = window.innerWidth - 60;
+      const availH = window.innerHeight - 120;
+      const scale = Math.min(availW / W, availH / H, 1.0);
+      container.style.transform = `scale(${scale})`;
+    }
+    window.addEventListener('resize', resizeStage);
+    resizeStage();
+
+    // ========================================================
+    // MATHEMATICAL EASINGS & KINETICS
+    // ========================================================
+    const clamp = (v, min = 0, max = 1) => Math.max(min, Math.min(max, v));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    function springPunch(t, start, dur = 0.16, s = 1.35) {
+      if (t <= start) return 0;
+      const p = Math.min(1, (t - start) / dur);
+      const p1 = p - 1;
+      return p1 * p1 * ((s + 1) * p1 + s) + 1;
+    }
+
+    function easeOutExpo(x) {
+      return x === 1 ? 1 : 1 - Math.pow(2, -10 * clamp(x));
+    }
+
+    function easeInOutQuad(x) {
+      return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+    }
+
+    // ========================================================
+    // PRE-GENERATED PARTICLES FOR ROSETTE BURST & AMBIENT
+    // ========================================================
+    const NUM_BURST_PARTICLES = 160;
+    const burstParticles = [];
+    for (let i = 0; i < NUM_BURST_PARTICLES; i++) {
+      const angle = (i / NUM_BURST_PARTICLES) * Math.PI * 2 + (Math.sin(i * 3.7) * 0.25);
+      const speed = 180 + (Math.sin(i * 9.1) * 0.5 + 0.5) * 340;
+      const radius = 2.0 + (Math.sin(i * 5.3) * 0.5 + 0.5) * 4.0;
+      const life = 0.8 + (Math.sin(i * 7.1) * 0.5 + 0.5) * 1.6;
+      const colorType = i % 4; // 0,1: emerald, 2: off-white, 3: cyan
+      burstParticles.push({ angle, speed, radius, life, colorType });
+    }
+
+    const NUM_AMBIENT_STARS = 70;
+    const ambientStars = [];
+    for (let i = 0; i < NUM_AMBIENT_STARS; i++) {
+      ambientStars.push({
+        x: (Math.sin(i * 12.3) * 0.5 + 0.5) * W,
+        y: (Math.cos(i * 17.1) * 0.5 + 0.5) * H,
+        r: 1.0 + (i % 3) * 0.8,
+        alpha: 0.15 + (i % 5) * 0.08,
+        speed: 0.2 + (i % 4) * 0.15
+      });
+    }
+
+    // ========================================================
+    // ZERO-OVERLAP STACKED KINETIC TYPOGRAPHY ENGINE
+    // ========================================================
+    function renderWordLine(ctx, cfg) {
+      const {
+        words,
+        startTimes,
+        t,
+        x,
+        y,
+        fontSize = 130,
+        align = 'center',
+        color = '#ECECEC',
+        accentColor = '#10A37F',
+        hasAccentPeriod = true,
+        fontFamily = 'AntonLocal, Anton, "Plus Jakarta Sans", sans-serif'
+      } = cfg;
+
+      ctx.save();
+      ctx.font = `400 ${fontSize}px ${fontFamily}`;
+      ctx.textBaseline = 'middle';
+
+      const spaceW = fontSize * 0.36; // Generous space so words never touch
+      const wordMetrics = words.map(w => ({ text: w, width: ctx.measureText(w).width }));
+      const totalW = wordMetrics.reduce((sum, m) => sum + m.width, 0) + (words.length - 1) * spaceW;
+
+      let startX = x;
+      if (align === 'center') startX = x - totalW / 2;
+      else if (align === 'right') startX = x - totalW;
+
+      let curX = startX;
+      for (let i = 0; i < words.length; i++) {
+        const wTime = startTimes[i];
+        if (t < wTime) {
+          curX += wordMetrics[i].width + spaceW;
+          continue;
+        }
+
+        const elapsed = t - wTime;
+        const punch = springPunch(t, wTime, 0.12, 1.25);
+        const scale = lerp(1.22, 1.0, clamp(punch));
+        const alpha = clamp(elapsed / 0.05);
+        const isActive = (elapsed >= 0 && elapsed < 0.28);
+
+        ctx.save();
+        ctx.translate(curX + wordMetrics[i].width / 2, y);
+        ctx.scale(scale, scale);
+        ctx.globalAlpha = alpha;
+
+        const wordText = wordMetrics[i].text;
+        const hasPeriod = wordText.endsWith('.');
+        const cleanWord = hasPeriod ? wordText.slice(0, -1) : wordText;
+
+        ctx.fillStyle = isActive ? '#1DD89E' : color;
+        ctx.textAlign = 'left';
+        const cleanW = ctx.measureText(cleanWord).width;
+        ctx.fillText(cleanWord, -wordMetrics[i].width / 2, 0);
+
+        if (hasPeriod && hasAccentPeriod) {
+          ctx.fillStyle = accentColor;
+          ctx.fillText('.', -wordMetrics[i].width / 2 + cleanW, 0);
+        }
+
+        ctx.restore();
+        curX += wordMetrics[i].width + spaceW;
+      }
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // OPENAI ROSETTE 2D VECTOR GENERATOR
+    // ========================================================
+    // Draws the authentic chiral 6-arm OpenAI geometric figure
+    function drawOpenAIRosette(ctx, cx, cy, size, rotation = 0, color = '#10A37F', glow = true) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(rotation);
+
+      if (glow) {
+        ctx.shadowColor = 'rgba(16, 163, 127, 0.7)';
+        ctx.shadowBlur = 32;
+      }
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = size * 0.12;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // 6-fold chiral symmetry: 6 identical interlocking loops
+      for (let k = 0; k < 6; k++) {
+        ctx.save();
+        ctx.rotate((k * Math.PI) / 3);
+
+        ctx.beginPath();
+        // Geometry of a single OpenAI petal
+        const r1 = size * 0.32;
+        const r2 = size * 0.88;
+        const r3 = size * 0.58;
+
+        ctx.moveTo(0, -r1);
+        ctx.lineTo(0, -r2 * 0.85);
+        // Outer curved corner
+        ctx.arcTo(0, -r2, r2 * 0.35, -r2, size * 0.16);
+        ctx.lineTo(r2 * 0.48, -r2 * 0.82);
+        // Diagonal bridge into center hook
+        ctx.arcTo(r3 * 0.95, -r3 * 0.5, r3 * 0.5, -r3 * 0.15, size * 0.14);
+        ctx.lineTo(r1 * 0.86, -r1 * 0.45);
+
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Center core point
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.08, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // DYNAMIC 3D CAMERA SYSTEM
+    // ========================================================
+    function getCamera(t) {
+      if (t < 5.0) {
+        // Act 1: Slow subtle zoom in
+        const p = clamp(t / 5.0);
+        return {
+          x: 960,
+          y: 540,
+          zoom: lerp(0.96, 1.05, easeOutExpo(p)),
+          rotation: (Math.sin(t * 3) * 0.003) * (1 - p)
+        };
+      } else if (t < 10.0) {
+        // Act 2: Pan slightly down-center to frame reasoning trace
+        const p = clamp((t - 5.0) / 5.0);
+        return {
+          x: lerp(960, 960, easeOutExpo(p)),
+          y: lerp(540, 530, easeOutExpo(p)),
+          zoom: lerp(1.05, 1.00, easeOutExpo(p)),
+          rotation: 0
+        };
+      } else if (t < 15.0) {
+        // Act 3: Fast zoom into OpenAI rosette
+        const p = clamp((t - 10.0) / 5.0);
+        return {
+          x: 960,
+          y: 540,
+          zoom: lerp(1.00, 1.15, easeOutExpo(p)),
+          rotation: (1 - p) * 0.008
+        };
+      } else if (t < 20.0) {
+        // Act 4: Operator browser actions
+        const p = clamp((t - 15.0) / 5.0);
+        return {
+          x: lerp(960, 980, easeOutExpo(p)),
+          y: lerp(540, 535, easeOutExpo(p)),
+          zoom: lerp(1.15, 1.02, easeOutExpo(p)),
+          rotation: 0
+        };
+      } else if (t < 25.0) {
+        // Act 5: Benchmark metrics velocity surge
+        const p = clamp((t - 20.0) / 5.0);
+        return {
+          x: 960,
+          y: 540,
+          zoom: lerp(1.02, 1.18, easeOutExpo(p)),
+          rotation: 0
+        };
+      } else {
+        // Act 6: Master Lockup settle
+        const p = clamp((t - 25.0) / 5.0);
+        return {
+          x: 960,
+          y: 540,
+          zoom: lerp(1.18, 1.00, easeOutExpo(p)),
+          rotation: 0
+        };
+      }
+    }
+
+    // ========================================================
+    // CLEAN TOP BAR: "OPENAI // CHATGPT o3" (NO DEBUG COUNTERS!)
+    // ========================================================
+    function drawCleanTopBar(ctx) {
+      ctx.save();
+      ctx.textBaseline = 'middle';
+
+      // Left brand mark
+      ctx.font = '700 22px "Plus Jakarta Sans", -apple-system, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ECECEC';
+      ctx.fillText('OPENAI', 80, 54);
+
+      const brandW = ctx.measureText('OPENAI').width;
+      ctx.fillStyle = '#10A37F';
+      ctx.font = '600 20px "JetBrains Mono", monospace';
+      ctx.fillText('//', 80 + brandW + 12, 54);
+
+      ctx.fillStyle = '#9E9EA4';
+      ctx.font = '600 18px "JetBrains Mono", monospace';
+      ctx.fillText('CHATGPT o3', 80 + brandW + 42, 54);
+
+      // Right system status indicator (Production, No FPS counters)
+      ctx.textAlign = 'right';
+      const rightX = W - 80;
+
+      // Subtle green pulsing status dot
+      ctx.beginPath();
+      ctx.arc(rightX - 220, 54, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#10A37F';
+      ctx.shadowColor = 'rgba(16, 163, 127, 0.8)';
+      ctx.shadowBlur = 10;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = '#8E8E93';
+      ctx.font = '600 14px "JetBrains Mono", monospace';
+      ctx.fillText('SYSTEM ONLINE // REASONING', rightX, 54);
+
+      // Thin hairline divider across header
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(80, 84);
+      ctx.lineTo(W - 80, 84);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // ========================================================
+    // MASTER DETERMINISTIC FRAME RENDERER: window.__renderFrameAt(t)
+    // ========================================================
+    window.__renderFrameAt = function(t) {
+      // 1. Dark Obsidian Background + Ambient Radial Mint Glow
+      ctx.fillStyle = '#0D0D0E';
+      ctx.fillRect(0, 0, W, H);
+
+      // Ambient radial emerald gradient
+      const haloRad = 700;
+      const grad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, haloRad);
+      grad.addColorStop(0, 'rgba(16, 163, 127, 0.09)');
+      grad.addColorStop(0.4, 'rgba(16, 163, 127, 0.03)');
+      grad.addColorStop(1, 'rgba(13, 13, 14, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      // Subtle matrix / tech dot grid
+      ctx.save();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
+      const step = 64;
+      for (let gx = 80; gx < W - 80; gx += step) {
+        for (let gy = 100; gy < H - 80; gy += step) {
+          ctx.fillRect(gx - 1, gy - 1, 2, 2);
+        }
+      }
+      ctx.restore();
+
+      // Ambient floating micro-stars
+      ctx.save();
+      for (let i = 0; i < ambientStars.length; i++) {
+        const star = ambientStars[i];
+        const curY = (star.y + t * star.speed * 20) % H;
+        ctx.fillStyle = `rgba(16, 163, 127, ${star.alpha * (0.8 + 0.2 * Math.sin(t * 2 + i))})`;
+        ctx.beginPath();
+        ctx.arc(star.x, curY, star.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // Apply 3D Camera Spline
+      const cam = getCamera(t);
+      ctx.save();
+      ctx.translate(W / 2, H / 2);
+      ctx.scale(cam.zoom, cam.zoom);
+      ctx.rotate(cam.rotation);
+      ctx.translate(-cam.x, -cam.y);
+
+      // ========================================================
+      // ACT 1: "THINK DEEPER." -> "GPT-o3 REASONING." (0.0s - 5.0s)
+      // ========================================================
+      if (t >= 0.0 && t < 5.0) {
+        const actT = t;
+        const actFade = (t > 4.4) ? clamp((5.0 - t) / 0.6) : 1.0;
+        ctx.save();
+        ctx.globalAlpha = actFade;
+
+        // Top Category Tag Pill
+        const pillPunch = springPunch(actT, 0.15, 0.18, 1.2);
+        ctx.save();
+        ctx.translate(960, 310);
+        ctx.scale(pillPunch, pillPunch);
+        ctx.fillStyle = 'rgba(16, 163, 127, 0.12)';
+        ctx.strokeStyle = 'rgba(16, 163, 127, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(-210, -20, 420, 40, 9999);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.font = '700 14px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#1DD89E';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('FRONTIER REINFORCEMENT LEARNING', 0, 0);
+        ctx.restore();
+
+        // Stacked Line 1: "THINK DEEPER." (0.35s, 0.95s)
+        renderWordLine(ctx, {
+          words: ['THINK', 'DEEPER.'],
+          startTimes: [0.35, 0.95],
+          t: actT,
+          x: 960,
+          y: 430,
+          fontSize: 140,
+          align: 'center',
+          color: '#ECECEC',
+          accentColor: '#10A37F'
+        });
+
+        // Stacked Line 2: "GPT-o3 REASONING." (2.00s, 2.70s)
+        renderWordLine(ctx, {
+          words: ['GPT-o3', 'REASONING.'],
+          startTimes: [2.00, 2.70],
+          t: actT,
+          x: 960,
+          y: 590,
+          fontSize: 140,
+          align: 'center',
+          color: '#10A37F',
+          accentColor: '#1DD89E'
+        });
+
+        // Bottom Subtitle Callout
+        if (actT >= 3.0) {
+          const subAlpha = clamp((actT - 3.0) / 0.35);
+          ctx.save();
+          ctx.globalAlpha = actFade * subAlpha;
+          ctx.font = '600 24px "Plus Jakarta Sans", sans-serif';
+          ctx.fillStyle = '#8E8E93';
+          ctx.textAlign = 'center';
+          ctx.fillText('Breakthrough reasoning performance across math, coding, and science.', 960, 740);
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 2: Live Streaming Thinking Trace Box + Token Streams (5.0s - 10.0s)
+      // ========================================================
+      if (t >= 5.0 && t < 10.0) {
+        const actT = t - 5.0; // 0.0 to 5.0
+        const actFade = (t > 9.4) ? clamp((10.0 - t) / 0.6) : clamp((t - 5.0) / 0.3);
+        ctx.save();
+        ctx.globalAlpha = actFade;
+
+        // Card Container Dimensions
+        const cardW = 1420;
+        const cardH = 680;
+        const cardX = (W - cardW) / 2;
+        const cardY = 210;
+
+        // Glass obsidian card background
+        ctx.fillStyle = 'rgba(18, 18, 22, 0.92)';
+        ctx.strokeStyle = 'rgba(16, 163, 127, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(cardX, cardY, cardW, cardH, 20);
+        ctx.fill();
+        ctx.stroke();
+
+        // Card Header Bar
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+        ctx.beginPath();
+        ctx.roundRect(cardX, cardY, cardW, 64, [20, 20, 0, 0]);
+        ctx.fill();
+
+        // Window Controls (3 dots)
+        const dotColors = ['#FF5F56', '#FFBD2E', '#27C93F'];
+        for (let d = 0; d < 3; d++) {
+          ctx.beginPath();
+          ctx.arc(cardX + 32 + d * 22, cardY + 32, 6, 0, Math.PI * 2);
+          ctx.fillStyle = dotColors[d];
+          ctx.fill();
+        }
+
+        // Live Thinking Trace Badge ("Thinking for 14 seconds...")
+        // Simulated timer counting from 0s to 14s based on act progress
+        const thinkingSeconds = Math.min(14, Math.floor(actT * 3.5));
+        ctx.save();
+        ctx.translate(cardX + 130, cardY + 32);
+        // Pulsing spinner ring
+        ctx.rotate(actT * 4);
+        ctx.strokeStyle = '#10A37F';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, 10, 0, Math.PI * 1.5);
+        ctx.stroke();
+        ctx.restore();
+
+        ctx.font = '700 16px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#1DD89E';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`Thinking for ${thinkingSeconds} seconds...`, cardX + 154, cardY + 32);
+
+        // Header Right: Model Badge
+        ctx.textAlign = 'right';
+        ctx.font = '700 14px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#8E8E93';
+        ctx.fillText('ENGINE: o3-HIGH // REASONING-TOKENS: ACTIVE', cardX + cardW - 32, cardY + 32);
+
+        // Trace Lines & Token Stream Code
+        const traceStatements = [
+          { time: 0.2, text: '// Step 1: Formalize state space and dynamic programming invariant', color: '#6A737D' },
+          { time: 0.7, text: 'interface LatticeProof { invariant: Tensor; verified: boolean; branchEntropy: number; }', color: '#ECECEC' },
+          { time: 1.3, text: 'async function verifyOptimalTrajectory(lattice: LatticeState): Promise<Proof> {', color: '#10A37F' },
+          { time: 1.8, text: '  const entropy = computeTopologicalInvariant(lattice);', color: '#ECECEC' },
+          { time: 2.3, text: '  // Verify zero ground-state variance across tree-of-thought branches', color: '#6A737D' },
+          { time: 2.8, text: '  if (!entropy.isZero()) throw new OptimizationDivergenceError("Pruning path");', color: '#E5C07B' },
+          { time: 3.3, text: '  const certifiedProof = await synthesizeBranchVerification(lattice);', color: '#61AFEF' },
+          { time: 3.8, text: '  return { invariant: entropy, verified: true, branchEntropy: 0.0000 };', color: '#1DD89E' },
+          { time: 4.2, text: '}', color: '#10A37F' }
+        ];
+
+        let lineY = cardY + 110;
+        ctx.font = '600 19px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+
+        for (let i = 0; i < traceStatements.length; i++) {
+          const item = traceStatements[i];
+          if (actT >= item.time) {
+            const lineProgress = clamp((actT - item.time) / 0.25);
+            const charsToShow = Math.floor(item.text.length * lineProgress);
+            const displayedStr = item.text.substring(0, charsToShow);
+
+            ctx.fillStyle = item.color;
+            ctx.fillText(displayedStr, cardX + 48, lineY);
+
+            // Blinking cursor on active line
+            if (i === traceStatements.length - 1 || actT < traceStatements[i + 1].time) {
+              if (Math.sin(actT * 12) > 0) {
+                const textW = ctx.measureText(displayedStr).width;
+                ctx.fillStyle = '#10A37F';
+                ctx.fillRect(cardX + 50 + textW, lineY - 14, 10, 20);
+              }
+            }
+          }
+          lineY += 46;
+        }
+
+        // Right-Side Telemetry Box inside card
+        const teleX = cardX + cardW - 360;
+        const teleY = cardY + 95;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.beginPath();
+        ctx.roundRect(teleX, teleY, 320, 380, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.font = '700 13px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#8E8E93';
+        ctx.fillText('LIVE REASONING METRICS', teleX + 24, teleY + 36);
+
+        const metrics = [
+          { label: 'TOKEN STREAM', val: '142.6 t/s', col: '#1DD89E' },
+          { label: 'SEARCH DEPTH', val: 'Level 18', col: '#ECECEC' },
+          { label: 'BEAM BRANCHES', val: '64 Active', col: '#ECECEC' },
+          { label: 'CONFIDENCE', val: '99.82%', col: '#10A37F' }
+        ];
+
+        let mY = teleY + 80;
+        for (let m = 0; m < metrics.length; m++) {
+          ctx.font = '600 12px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#6E6E73';
+          ctx.fillText(metrics[m].label, teleX + 24, mY);
+
+          ctx.font = '700 18px "JetBrains Mono", monospace';
+          ctx.fillStyle = metrics[m].col;
+          ctx.fillText(metrics[m].val, teleX + 24, mY + 24);
+          mY += 66;
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 3: Animated 2D Vector OpenAI Rosette & Particle Burst (10.0s - 15.0s)
+      // ========================================================
+      if (t >= 10.0 && t < 15.0) {
+        const actT = t - 10.0; // 0.0 to 5.0
+        const actFade = (t > 14.4) ? clamp((15.0 - t) / 0.6) : clamp((t - 10.0) / 0.35);
+        ctx.save();
+        ctx.globalAlpha = actFade;
+
+        // Big Background Pulse Ring
+        const pulseR = 180 + Math.sin(actT * 2.5) * 25;
+        const pulseGrad = ctx.createRadialGradient(960, 480, 20, 960, 480, pulseR * 2.2);
+        pulseGrad.addColorStop(0, 'rgba(16, 163, 127, 0.28)');
+        pulseGrad.addColorStop(0.5, 'rgba(16, 163, 127, 0.06)');
+        pulseGrad.addColorStop(1, 'rgba(13, 13, 14, 0)');
+        ctx.fillStyle = pulseGrad;
+        ctx.fillRect(0, 0, W, H);
+
+        // Particle Burst System (Expands from center starting at actT = 0)
+        for (let i = 0; i < burstParticles.length; i++) {
+          const p = burstParticles[i];
+          const dist = p.speed * actT * Math.exp(-actT * 0.2);
+          const px = 960 + Math.cos(p.angle) * dist;
+          const py = 480 + Math.sin(p.angle) * dist;
+          const pLife = clamp(1.0 - (actT / p.life));
+
+          if (pLife > 0) {
+            ctx.save();
+            ctx.globalAlpha = actFade * pLife;
+            let col = '#10A37F';
+            if (p.colorType === 2) col = '#ECECEC';
+            else if (p.colorType === 3) col = '#1DD89E';
+            ctx.fillStyle = col;
+            ctx.shadowColor = col;
+            ctx.shadowBlur = 12;
+            ctx.beginPath();
+            ctx.arc(px, py, p.radius * pLife, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        }
+
+        // Rosette Geometry Entrance & Rotation
+        const rosettePunch = springPunch(actT, 0.0, 0.35, 1.4);
+        const rosetteScale = lerp(0.4, 1.0, clamp(rosettePunch)) * (1.0 + 0.04 * Math.sin(actT * 3));
+        const rotationAngle = actT * 0.45; // Smooth continuous rotation
+
+        ctx.save();
+        ctx.translate(960, 480);
+        ctx.scale(rosetteScale, rosetteScale);
+        drawOpenAIRosette(ctx, 0, 0, 210, rotationAngle, '#1DD89E', true);
+        ctx.restore();
+
+        // Sleek High-Craft Typography Below Rosette
+        renderWordLine(ctx, {
+          words: ['ARCHITECTURAL', 'SYMMETRY.'],
+          startTimes: [0.6, 1.2],
+          t: actT,
+          x: 960,
+          y: 790,
+          fontSize: 84,
+          align: 'center',
+          color: '#ECECEC',
+          accentColor: '#10A37F'
+        });
+
+        if (actT >= 1.8) {
+          const subAlpha = clamp((actT - 1.8) / 0.3);
+          ctx.save();
+          ctx.globalAlpha = actFade * subAlpha;
+          ctx.font = '700 16px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#8E8E93';
+          ctx.textAlign = 'center';
+          ctx.fillText('6-FOLD CHIRAL TOPOLOGY // DEEP REINFORCEMENT INFERENCE', 960, 870);
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 4: "AUTONOMOUS OPERATOR." -> "ACTIONS IN BROWSER." (15.0s - 20.0s)
+      // ========================================================
+      if (t >= 15.0 && t < 20.0) {
+        const actT = t - 15.0; // 0.0 to 5.0
+        const actFade = (t > 19.4) ? clamp((20.0 - t) / 0.6) : clamp((t - 15.0) / 0.35);
+        ctx.save();
+        ctx.globalAlpha = actFade;
+
+        // Stacked Kinetic Title Header: "AUTONOMOUS OPERATOR."
+        renderWordLine(ctx, {
+          words: ['AUTONOMOUS', 'OPERATOR.'],
+          startTimes: [0.00, 0.80],
+          t: actT,
+          x: 960,
+          y: 220,
+          fontSize: 90,
+          align: 'center',
+          color: '#ECECEC',
+          accentColor: '#10A37F'
+        });
+
+        // Subline: "ACTIONS IN BROWSER."
+        renderWordLine(ctx, {
+          words: ['ACTIONS', 'IN', 'BROWSER.'],
+          startTimes: [1.80, 2.30, 2.80],
+          t: actT,
+          x: 960,
+          y: 320,
+          fontSize: 70,
+          align: 'center',
+          color: '#10A37F',
+          accentColor: '#1DD89E'
+        });
+
+        // Browser Stage Card
+        const bW = 1280;
+        const bH = 540;
+        const bX = (W - bW) / 2;
+        const bY = 410;
+
+        ctx.fillStyle = '#141416';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(bX, bY, bW, bH, 18);
+        ctx.fill();
+        ctx.stroke();
+
+        // Browser Header & URL Bar
+        ctx.fillStyle = '#1B1B1E';
+        ctx.beginPath();
+        ctx.roundRect(bX, bY, bW, 56, [18, 18, 0, 0]);
+        ctx.fill();
+
+        // Dots
+        const dotColors = ['#FF5F56', '#FFBD2E', '#27C93F'];
+        for (let d = 0; d < 3; d++) {
+          ctx.beginPath();
+          ctx.arc(bX + 28 + d * 20, bY + 28, 5.5, 0, Math.PI * 2);
+          ctx.fillStyle = dotColors[d];
+          ctx.fill();
+        }
+
+        // Mock URL bar
+        ctx.fillStyle = '#0E0E10';
+        ctx.beginPath();
+        ctx.roundRect(bX + 110, bY + 12, bW - 220, 32, 8);
+        ctx.fill();
+
+        ctx.font = '600 13px "JetBrains Mono", monospace';
+        ctx.fillStyle = '#10A37F';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🔒 https://operator.frontier.ai/workspace/autonomous-agent', bX + 130, bY + 28);
+
+        // Multi-Step Operator Action Steps popping in sequence
+        const actions = [
+          { time: 1.0, step: '01', title: 'BROWSER DOM INSPECTION', status: 'COMPLETE', desc: 'Identified interactive elements, evaluated checkout workflow graph' },
+          { time: 2.2, step: '02', title: 'EXECUTE MULTI-STEP REASONING', status: 'ACTIVE', desc: 'Resolved CAPTCHA challenge, filled multi-factor enterprise auth credentials' },
+          { time: 3.4, step: '03', title: 'VERIFIED TRANSACTION COMPLETION', status: 'SYNTHESIZED', desc: 'Generated formal proof of execution, logged state to remote agent cluster' }
+        ];
+
+        let actBoxY = bY + 90;
+        for (let k = 0; k < actions.length; k++) {
+          const ac = actions[k];
+          if (actT >= ac.time) {
+            const punch = springPunch(actT, ac.time, 0.2, 1.2);
+            ctx.save();
+            ctx.translate(bX + 50, actBoxY);
+            ctx.scale(punch, punch);
+
+            const isCurrent = (k === 1 && actT < 3.4) || (k === 2 && actT >= 3.4);
+            ctx.fillStyle = isCurrent ? 'rgba(16, 163, 127, 0.08)' : 'rgba(255, 255, 255, 0.03)';
+            ctx.strokeStyle = isCurrent ? '#10A37F' : 'rgba(255, 255, 255, 0.08)';
+            ctx.beginPath();
+            ctx.roundRect(0, 0, bW - 100, 110, 12);
+            ctx.fill();
+            ctx.stroke();
+
+            // Step number badge
+            ctx.fillStyle = isCurrent ? '#1DD89E' : '#8E8E93';
+            ctx.font = '700 24px AntonLocal, Anton, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(ac.step, 28, 42);
+
+            // Title
+            ctx.fillStyle = '#ECECEC';
+            ctx.font = '700 18px "Plus Jakarta Sans", sans-serif';
+            ctx.fillText(ac.title, 90, 40);
+
+            // Description
+            ctx.fillStyle = '#8E8E93';
+            ctx.font = '500 14px "Plus Jakarta Sans", sans-serif';
+            ctx.fillText(ac.desc, 90, 75);
+
+            // Status Pill
+            ctx.textAlign = 'right';
+            ctx.font = '700 12px "JetBrains Mono", monospace';
+            ctx.fillStyle = isCurrent ? '#1DD89E' : '#10A37F';
+            ctx.fillText(`[ ${ac.status} ]`, bW - 140, 56);
+
+            ctx.restore();
+          }
+          actBoxY += 135;
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 5: "FRONTIER INTELLIGENCE." -> "ZERO LATENCY." (20.0s - 25.0s)
+      // ========================================================
+      if (t >= 20.0 && t < 25.0) {
+        const actT = t - 20.0; // 0.0 to 5.0
+        const actFade = (t > 24.4) ? clamp((25.0 - t) / 0.6) : clamp((t - 20.0) / 0.35);
+        ctx.save();
+        ctx.globalAlpha = actFade;
+
+        // Header Stack: "FRONTIER INTELLIGENCE." (0.0s, 0.8s)
+        renderWordLine(ctx, {
+          words: ['FRONTIER', 'INTELLIGENCE.'],
+          startTimes: [0.00, 0.80],
+          t: actT,
+          x: 960,
+          y: 200,
+          fontSize: 90,
+          align: 'center',
+          color: '#ECECEC',
+          accentColor: '#10A37F'
+        });
+
+        // Subline: "ZERO LATENCY." (2.2s, 2.9s)
+        renderWordLine(ctx, {
+          words: ['ZERO', 'LATENCY.'],
+          startTimes: [2.20, 2.90],
+          t: actT,
+          x: 960,
+          y: 300,
+          fontSize: 70,
+          align: 'center',
+          color: '#10A37F',
+          accentColor: '#1DD89E'
+        });
+
+        // 3 Kinetic Benchmark Cards Side-by-Side
+        const benchmarks = [
+          { name: 'ARC-AGI BENCHMARK', targetScore: 87.5, delta: '+28.4% OVER HUMAN BASELINE', delay: 0.5 },
+          { name: 'COMPETITIVE MATH (AIME)', targetScore: 96.7, delta: 'GOLD MEDALIST EQUIVALENCE', delay: 1.1 },
+          { name: 'SWE-BENCH VERIFIED', targetScore: 71.7, delta: 'STATE-OF-THE-ART AUTONOMOUS SWE', delay: 1.7 }
+        ];
+
+        const cardWidth = 400;
+        const cardGap = 40;
+        const totalCardsW = 3 * cardWidth + 2 * cardGap;
+        const startCardX = (W - totalCardsW) / 2;
+        const cardTopY = 400;
+
+        for (let b = 0; b < benchmarks.length; b++) {
+          const bm = benchmarks[b];
+          if (actT >= bm.delay) {
+            const punch = springPunch(actT, bm.delay, 0.22, 1.25);
+            const bx = startCardX + b * (cardWidth + cardGap);
+
+            ctx.save();
+            ctx.translate(bx + cardWidth / 2, cardTopY + 240);
+            ctx.scale(punch, punch);
+            ctx.translate(-cardWidth / 2, -240);
+
+            // Card Background
+            ctx.fillStyle = '#141416';
+            ctx.strokeStyle = 'rgba(16, 163, 127, 0.35)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, cardWidth, 480, 18);
+            ctx.fill();
+            ctx.stroke();
+
+            // Card Header
+            ctx.font = '700 13px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#8E8E93';
+            ctx.textAlign = 'left';
+            ctx.fillText(bm.name, 28, 48);
+
+            // Score Counter Count-Up
+            const countProgress = easeOutExpo(clamp((actT - bm.delay) / 1.5));
+            const currentScore = (bm.targetScore * countProgress).toFixed(1);
+
+            ctx.font = '700 88px AntonLocal, Anton, sans-serif';
+            ctx.fillStyle = '#ECECEC';
+            ctx.fillText(`${currentScore}%`, 28, 160);
+
+            // Progress bar track
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.beginPath();
+            ctx.roundRect(28, 220, cardWidth - 56, 14, 7);
+            ctx.fill();
+
+            // Progress bar fill
+            const barW = (cardWidth - 56) * (currentScore / 100);
+            const barGrad = ctx.createLinearGradient(28, 0, 28 + barW, 0);
+            barGrad.addColorStop(0, '#10A37F');
+            barGrad.addColorStop(1, '#1DD89E');
+            ctx.fillStyle = barGrad;
+            ctx.beginPath();
+            ctx.roundRect(28, 220, barW, 14, 7);
+            ctx.fill();
+
+            // Delta callout
+            ctx.font = '700 12px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#1DD89E';
+            ctx.fillText(bm.delta, 28, 280);
+
+            // Bottom metric separator
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.beginPath();
+            ctx.moveTo(28, 330);
+            ctx.lineTo(cardWidth - 28, 330);
+            ctx.stroke();
+
+            // Verified Badge
+            ctx.font = '600 13px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#8E8E93';
+            ctx.fillText('VERIFIED VIA EXTERNAL AUDIT', 28, 380);
+
+            ctx.font = '700 14px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#10A37F';
+            ctx.fillText('STATUS: CONFIRMED SOTA', 28, 420);
+
+            ctx.restore();
+          }
+        }
+
+        ctx.restore();
+      }
+
+      // ========================================================
+      // ACT 6: Climax & Master Lockup "ChatGPT o3." (25.0s - 30.0s)
+      // ========================================================
+      if (t >= 25.0 && t <= 30.0) {
+        const actT = t - 25.0; // 0.0 to 5.0
+        const actFade = clamp(actT / 0.35);
+        ctx.save();
+        ctx.globalAlpha = actFade;
+
+        // Big Pulsating Green Halo in Background
+        const haloPulse = 1.0 + 0.08 * Math.sin(actT * 2.5);
+        const haloR = 380 * haloPulse;
+        const lockupHalo = ctx.createRadialGradient(960, 440, 40, 960, 440, haloR);
+        lockupHalo.addColorStop(0, 'rgba(16, 163, 127, 0.32)');
+        lockupHalo.addColorStop(0.4, 'rgba(16, 163, 127, 0.12)');
+        lockupHalo.addColorStop(1, 'rgba(13, 13, 14, 0)');
+        ctx.fillStyle = lockupHalo;
+        ctx.beginPath();
+        ctx.arc(960, 440, haloR, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Pulsating Concentric Halo Rings
+        for (let ring = 1; ring <= 3; ring++) {
+          const rRadius = haloR * (0.4 + ring * 0.28) + (actT * 15) % 80;
+          ctx.strokeStyle = `rgba(16, 163, 127, ${0.25 / ring})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(960, 440, rRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Center Rotating Mini Rosette Mark
+        const rPunch = springPunch(actT, 0.0, 0.3, 1.3);
+        ctx.save();
+        ctx.translate(960, 310);
+        ctx.scale(rPunch, rPunch);
+        drawOpenAIRosette(ctx, 0, 0, 75, actT * 0.35, '#1DD89E', true);
+        ctx.restore();
+
+        // Master Title: "ChatGPT o3." (Authoritative Kinetic Lockup)
+        renderWordLine(ctx, {
+          words: ['ChatGPT', 'o3.'],
+          startTimes: [0.00, 0.00],
+          t: actT,
+          x: 960,
+          y: 490,
+          fontSize: 160,
+          align: 'center',
+          color: '#ECECEC',
+          accentColor: '#10A37F'
+        });
+
+        // Subtitle Lockup: "FRONTIER MODEL // BROWSER & CODE AGENT"
+        if (actT >= 0.8) {
+          const sAlpha = clamp((actT - 0.8) / 0.35);
+          ctx.save();
+          ctx.globalAlpha = actFade * sAlpha;
+          ctx.font = '700 24px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#1DD89E';
+          ctx.textAlign = 'center';
+          ctx.fillText('FRONTIER MODEL // BROWSER & CODE AGENT', 960, 640);
+          ctx.restore();
+        }
+
+        // CTA Pill Button: "NOW AVAILABLE AT OPENAI.COM"
+        if (actT >= 1.4) {
+          const ctaPunch = springPunch(actT, 1.4, 0.25, 1.2);
+          ctx.save();
+          ctx.translate(960, 760);
+          ctx.scale(ctaPunch, ctaPunch);
+
+          ctx.fillStyle = '#10A37F';
+          ctx.shadowColor = 'rgba(16, 163, 127, 0.8)';
+          ctx.shadowBlur = 30;
+          ctx.beginPath();
+          ctx.roundRect(-240, -32, 480, 64, 9999);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+
+          ctx.font = '700 18px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#FFFFFF';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('TRY CHATGPT o3 → OPENAI.COM', 0, 0);
+
+          ctx.restore();
+        }
+
+        // Footer Legal & Build with Caleb Mark
+        if (actT >= 2.0) {
+          const fAlpha = clamp((actT - 2.0) / 0.35);
+          ctx.save();
+          ctx.globalAlpha = actFade * fAlpha;
+          ctx.font = '600 14px "JetBrains Mono", monospace';
+          ctx.fillStyle = '#6E6E73';
+          ctx.textAlign = 'center';
+          ctx.fillText('ENGINEERED FOR BUILD WITH CALEB // HYPER-MOTION STUDIO', 960, 920);
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+
+      ctx.restore(); // Restore camera
+
+      // 3. Draw Clean Minimal Top Bar (OPENAI // CHATGPT o3, NO Frame Counters)
+      drawCleanTopBar(ctx);
+    };
+
+    // ========================================================
+    // PLAYBACK CONTROLS & INTERACTIVE SCRUBBER
+    // ========================================================
+    let currentTime = 0;
+    let isPlaying = false;
+    let lastAnimTime = null;
+
+    function formatTime(s) {
+      const sec = Math.floor(s);
+      const ms = Math.floor((s - sec) * 100);
+      return `00:${String(sec).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+    }
+
+    function renderLoop(now) {
+      if (lastAnimTime === null) lastAnimTime = now;
+      const dt = (now - lastAnimTime) / 1000;
+      lastAnimTime = now;
+
+      if (isPlaying) {
+        currentTime += dt;
+        if (currentTime > TOTAL_DURATION) {
+          currentTime = 0;
+        }
+        slider.value = currentTime;
+      }
+
+      window.__renderFrameAt(currentTime);
+      timeLabel.textContent = formatTime(currentTime);
+
+      requestAnimationFrame(renderLoop);
+    }
+    requestAnimationFrame(renderLoop);
+
+    slider.addEventListener('input', (e) => {
+      currentTime = parseFloat(e.target.value);
+      window.__renderFrameAt(currentTime);
+      timeLabel.textContent = formatTime(currentTime);
+    });
+
+    btnPlay.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+      btnPlay.textContent = isPlaying ? 'PAUSE' : 'PLAY';
+    });
+
+    document.querySelectorAll('.jump-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        currentTime = parseFloat(e.target.dataset.time);
+        slider.value = currentTime;
+        window.__renderFrameAt(currentTime);
+        timeLabel.textContent = formatTime(currentTime);
+      });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        isPlaying = !isPlaying;
+        btnPlay.textContent = isPlaying ? 'PAUSE' : 'PLAY';
+      } else if (e.key >= '1' && e.key <= '6') {
+        const jumpTimes = [0.0, 5.0, 10.0, 15.0, 20.0, 25.0];
+        const idx = parseInt(e.key) - 1;
+        if (idx < jumpTimes.length) {
+          currentTime = jumpTimes[idx];
+          slider.value = currentTime;
+          window.__renderFrameAt(currentTime);
+          timeLabel.textContent = formatTime(currentTime);
+        }
+      }
+    });
+  </script>
+</body>
+</html>
