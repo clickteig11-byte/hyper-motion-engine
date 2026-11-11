@@ -1,0 +1,31 @@
+{
+  "name": "hyper-motion-engine",
+  "version": "1.0.0",
+  "description": "Deterministic 60fps HTML5 Canvas & GSAP Motion Graphics Launch Video Engine with Procedural Stereo Breakbeat Synthesizer",
+  "type": "module",
+  "main": "render.mjs",
+  "scripts": {
+    "render": "node render.mjs",
+    "render:60fps": "node render.mjs --60fps",
+    "synth:audio": "node audio-synth.mjs",
+    "preview": "npx serve .",
+    "test": "node -e \"console.log('Hyper-Motion Engine ready')\""
+  },
+  "keywords": [
+    "motion-graphics",
+    "playwright",
+    "canvas",
+    "gsap",
+    "ffmpeg",
+    "procedural-audio",
+    "video-generation",
+    "kinetic-typography",
+    "build-with-caleb"
+  ],
+  "author": "Caleb Blickteig (@clickteig11-byte)",
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.49.0"
+  },
+  "devDependencies": {}
+}
