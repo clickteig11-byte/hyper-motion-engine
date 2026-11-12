@@ -15,12 +15,12 @@ fs.mkdirSync(auditDir, { recursive: true });
 fs.mkdirSync(artifactAuditDir, { recursive: true });
 
 const BRANDS = [
-  { id: 'caleb', name: 'Build with Caleb', mp4: 'build-with-caleb-motion.mp4', wav: 'soundtrack-caleb.wav', bpm: 144 },
-  { id: 'chatgpt', name: 'ChatGPT o3', mp4: 'chatgpt-launch.mp4', wav: 'soundtrack-chatgpt.wav', bpm: 140 },
-  { id: 'gemini', name: 'Google Gemini 2.0', mp4: 'gemini-launch.mp4', wav: 'soundtrack-gemini.wav', wavAlt: 'soundtrack-gemini.wav', bpm: 144 },
-  { id: 'apple', name: 'Apple Intelligence', mp4: 'apple-launch.mp4', wav: 'soundtrack-apple.wav', bpm: 136 },
-  { id: 'spacex', name: 'SpaceX xAI India', mp4: 'spacex-launch.mp4', wav: 'soundtrack-spacex.wav', bpm: 148 },
-  { id: 'claude', name: 'Claude 3.7 Sonnet', mp4: 'claude-launch.mp4', wav: 'soundtrack-claude.wav', bpm: 138 }
+  { id: 'caleb', name: 'Build with Caleb // Flagship', mp4: 'build-with-caleb-motion.mp4', wav: 'soundtrack-caleb.wav', bpm: 144 },
+  { id: 'chatgpt', name: 'OpenAI // GPT-6.1 Terra', mp4: 'chatgpt-launch.mp4', wav: 'soundtrack-chatgpt.wav', bpm: 140 },
+  { id: 'gemini', name: 'Google // Gemini 4 Carbon', mp4: 'gemini-launch.mp4', wav: 'soundtrack-gemini.wav', wavAlt: 'soundtrack-gemini.wav', bpm: 144 },
+  { id: 'apple', name: 'Apple Intelligence // Siri AI (Fall 2026)', mp4: 'apple-launch.mp4', wav: 'soundtrack-apple.wav', bpm: 136 },
+  { id: 'spacex', name: 'SpaceX xAI India // Grok 4.8', mp4: 'spacex-launch.mp4', wav: 'soundtrack-spacex.wav', bpm: 148 },
+  { id: 'claude', name: 'Claude Opus 5.5 & Fable 5.2', mp4: 'claude-launch.mp4', wav: 'soundtrack-claude.wav', bpm: 138 }
 ];
 
 const SAMPLE_TIMES = [2.0, 7.0, 12.0, 17.0, 22.0, 27.5];
